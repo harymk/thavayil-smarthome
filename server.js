@@ -7,7 +7,10 @@ const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { 
+  cors: { origin: "*", methods: ["GET","POST"] },
+  transports: ["websocket", "polling"]
+});
 
 const JWT_SECRET_NEW = 'thavayil-smarthome-secret-2024-fixed';
 const JWT_SECRET_OLD = 'my-super-secret-123-change-this';
