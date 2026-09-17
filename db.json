@@ -1,0 +1,66 @@
+{
+  "users": [
+    {
+      "id": "1789671835212",
+      "email": "harymk@gmail.com",
+      "password": "djfkjdfh"
+    },
+    {
+      "id": "1789679258783",
+      "email": "fgfgfg@gmail.com",
+      "password": "sdfgh"
+    }
+  ],
+  "codes": [],
+  "devices": [
+    {
+      "id": "sfdf",
+      "userId": "1789671835212",
+      "name": "light",
+      "type": "LIGHT",
+      "displayCategory": "LIGHT",
+      "state": "ON",
+      "createdAt": "2026-09-17T20:58:56.662Z",
+      "color": {
+        "hue": 0,
+        "saturation": 0.72,
+        "brightness": 94
+      },
+      "brightness": 77
+    },
+    {
+      "id": "dg",
+      "userId": "1789671835212",
+      "name": "fan",
+      "type": "FAN",
+      "displayCategory": "FAN",
+      "state": "ON",
+      "createdAt": "2026-09-17T20:59:09.095Z",
+      "speed": 1
+    },
+    {
+      "id": "dgdg",
+      "userId": "1789679258783",
+      "name": "zfxzfh",
+      "type": "LIGHT",
+      "displayCategory": "LIGHT",
+      "state": "OFF",
+      "createdAt": "2026-09-17T21:07:49.144Z",
+      "color": {
+        "hue": 48,
+        "saturation": 0.92,
+        "brightness": 80
+      },
+      "brightness": 80
+    },
+    {
+      "id": "dd",
+      "userId": "1789679258783",
+      "name": "dgdgdg",
+      "type": "SWITCH",
+      "displayCategory": "SWITCH",
+      "state": "OFF",
+      "createdAt": "2026-09-17T21:08:01.304Z"
+    }
+  ]
+}

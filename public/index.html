@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thavayil SmartHome</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui;background:#08080c;color:#e4e4e7;min-height:100vh}
+.header{height:60px;background:#0e0e14;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:20}
+.card{background:#14141e;border:1px solid rgba(255,255,255,0.08);border-radius:24px;overflow:hidden}
+.card-inner{background:#12121a;border:1px solid rgba(255,255,255,0.07);border-radius:20px}
+.input{width:100%;height:56px;background:#0d0d13;border:1px solid rgba(255,255,255,0.10);border-radius:12px;color:#fff;padding:0 16px;font-size:15px;outline:none}
+.btn{height:52px;border-radius:12px;border:0;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}.btn-w{background:#fff;color:#000;width:100%}.btn-g{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.10);color:#fff}
+.btn-signout{height:36px;padding:0 16px;border-radius:10px;background:#ef4444;border:0;color:#fff;font-size:13px;cursor:pointer}
+.btn-copy{height:28px;padding:0 10px;border-radius:8px;background:#fff;color:#000;font-size:11px;cursor:pointer;font-weight:600}
+.btn-small{height:28px;padding:0 12px;border-radius:8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.10);color:#fff;font-size:11px;cursor:pointer}
+.toggle{width:64px;height:36px;background:rgba(255,255,255,0.12);border-radius:999px;position:relative;cursor:pointer;border:1px solid rgba(255,255,255,0.14);transition:.2s}.toggle.on{background:#10b981;border-color:#10b981}.toggle-dot{width:30px;height:30px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:.2s}.toggle.on .toggle-dot{transform:translateX(28px)}
+.main{max-width:900px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:24px}
+.mono{font-family:'JetBrains Mono',monospace}.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e1e27;border:1px solid rgba(255,255,255,0.1);padding:12px 20px;border-radius:999px;font-size:13px;z-index:100}
+.code-block{background:#0a0a0f;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;overflow:auto;max-height:400px}
+.token-box{background:#000;border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;word-break:break-all;font-size:11px;overflow:auto;max-height:80px}
+.slider{width:100%;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;outline:none;-webkit-appearance:none;appearance:none}
+.slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;background:#fff;border-radius:50%;cursor:pointer}
+.live-dot{width:8px;height:8px;background:#10b981;border-radius:50%;display:inline-block;animation:blink 1.5s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="header">
+<div style="display:flex;align-items:center;gap:12px"><div style="width:32px;height:32px;background:#fff;color:#000;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700">T</div><div><div style="font-size:14px;font-weight:600">Thavayil SmartHome</div></div></div>
+<div style="display:flex;align-items:center;gap:12px"><span id="liveStatus" style="font-size:10px;padding:4px 8px;border-radius:20px;background:rgba(16,185,129,0.15);color:#10b981">● LIVE</span><span id="userEmail" style="font-size:12px;color:#71717a"></span><button id="signoutBtn" class="btn-signout" style="display:none" onclick="signout()">Sign out</button></div>
+</div>
+
+<div id="authView" style="max-width:420px;margin:80px auto;padding:20px"><div class="card" style="padding:28px"><h2 style="font-size:18px;font-weight:600">Login</h2><input id="email" class="input" placeholder="Email" style="margin:12px 0"><input id="pass" class="input" type="password" placeholder="Password"><button class="btn btn-w" style="margin-top:12px" onclick="login()">Login</button><button class="btn btn-g" style="width:100%;margin-top:8px" onclick="register()">Create Account</button><div id="authMsg" style="font-size:11px;color:#ef4444;margin-top:8px"></div></div></div>
+
+<div id="dashView" style="display:none"><div class="main">
+
+<div class="card"><div style="padding:16px;background:#0d0d13"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:13px;font-weight:600">TOKEN</div><button class="btn-copy" onclick="copyToken()">Copy Token</button></div><div id="tokenBox" class="mono token-box" style="margin-top:10px">Loading...</div></div></div>
+
+<div class="card"><div style="padding:20px"><div style="font-size:16px;font-weight:600">Add Device</div></div>
+<div style="padding:0 20px 20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div><label style="font-size:10px;color:#71717a">NAME</label><input id="devName" class="input" placeholder="Hall Light" style="margin-top:6px;height:48px"></div>
+<div><label style="font-size:10px;color:#71717a">TYPE</label><select id="devType" class="input" style="margin-top:6px;height:48px" onchange="onTypeChange()"><option value="LIGHT">LIGHT</option><option value="SWITCH">SWITCH</option><option value="FAN">FAN</option></select></div>
+</div>
+<div><label style="font-size:10px;color:#71717a">DEVICE ID</label><div style="display:flex;gap:8px;margin-top:6px"><input id="devId" class="input" placeholder="hall_light_01" style="height:48px"><button class="btn btn-g" style="height:48px;width:70px" onclick="genId()">Auto</button></div></div>
+
+<div id="lightOpts" style="background:#0d0d13;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div id="colorDots" style="display:flex;gap:6px"></div><input id="colorPicker" type="color" value="#facc15" style="width:36px;height:36px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);cursor:pointer" oninput="setColor(this.value)"><span id="colorText" class="mono" style="font-size:10px;color:#71717a"></span></div>
+<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px">
+<div style="display:flex;justify-content:space-between;font-size:10px;color:#71717a"><span>BRIGHTNESS</span><span id="brightText">80%</span></div>
+<input id="brightSlider" class="slider" type="range" min="5" max="100" value="80" style="margin-top:6px" oninput="setBright(this.value)">
+</div>
+</div>
+
+<div id="fanOpts" style="display:none;background:#0d0d13;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:14px">
+<div style="display:flex;gap:6px;margin-top:8px"><button onclick="setSpeed(1)" class="btn btn-g" style="flex:1;height:40px" id="s1">1</button><button onclick="setSpeed(2)" class="btn btn-g" style="flex:1;height:40px" id="s2">2</button><button onclick="setSpeed(3)" class="btn btn-g" style="flex:1;height:40px;background:#fff;color:#000" id="s3">3</button><button onclick="setSpeed(4)" class="btn btn-g" style="flex:1;height:40px" id="s4">4</button><button onclick="setSpeed(5)" class="btn btn-g" style="flex:1;height:40px" id="s5">5</button></div>
+</div>
+
+<button class="btn btn-w" style="height:48px" onclick="addDevice()">+ Add Device</button>
+<div id="addMsg" style="font-size:11px;color:#71717a"></div>
+</div></div>
+
+<div><div style="display:flex;justify-content:space-between;margin-bottom:12px"><h3 style="font-size:12px;color:#71717a">MY DEVICES • <span id="myDevCount">0</span></h3><button class="btn-small" onclick="loadDevices()">Refresh</button></div><div id="devices" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px"></div></div>
+
+<div class="card"><div style="padding:16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="font-size:13px;font-weight:600">ESP32 Code</div><button class="btn btn-g" style="height:32px;font-size:11px;padding:0 12px" onclick="copyCode()">Copy Code</button></div><div style="padding:16px"><pre id="codeBlock" class="mono code-block" style="font-size:10px"></pre></div></div>
+
+</div></div>
+
+<div id="toast" class="toast" style="display:none"><span id="toastMsg"></span></div>
+
+<script>
+const API=window.location.origin;
+let token=localStorage.getItem('token'), devices=[], curColor='#facc15', curBright=80, curSpeed=3, socket=null;
+const presetColors=["#facc15","#fb7185","#a78bfa","#38bdf8","#34d399","#ffffff","#ff7a18","#ef4444"];
+
+function hexToHsb(hex){
+  hex=hex.replace('#','');
+  const r=parseInt(hex.slice(0,2),16)/255,g=parseInt(hex.slice(2,4),16)/255,b=parseInt(hex.slice(4,6),16)/255;
+  const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;
+  let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
+  const s=max===0?0:d/max; const v=max*100;
+  return { hue:Math.round(h), saturation:parseFloat(s.toFixed(2)), brightness:Math.round(v) };
+}
+function hsbToHex(h,s,b){
+  s=s<=1?s*100:s; b=b<=100?b/100:b; s/=100;
+  let c=b*s, x=c*(1-Math.abs((h/60)%2-1)), m=b-c, r=0,g=0,bl=0;
+  if(h<60){r=c;g=x;bl=0;}else if(h<120){r=x;g=c;bl=0;}else if(h<180){r=0;g=c;bl=x;}else if(h<240){r=0;g=x;bl=c;}else if(h<300){r=x;g=0;bl=c;}else{r=c;g=0;bl=x;}
+  r=Math.round((r+m)*255); g=Math.round((g+m)*255); bl=Math.round((bl+m)*255);
+  return '#'+[r,g,bl].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+function initDots(){ document.getElementById('colorDots').innerHTML=presetColors.map(c=>`<button onclick="setColor('${c}')" style="width:28px;height:28px;border-radius:50%;background:${c};border:${curColor===c?'2px solid white':'1px solid rgba(255,255,255,0.2)'}"></button>`).join(''); }
+function setColor(col){ 
+  curColor=col; 
+  document.getElementById('colorPicker').value=col; 
+  initDots(); 
+  const hsb=hexToHsb(col); 
+  document.getElementById('colorText').textContent=`${col.toUpperCase()} → hue:${hsb.hue} sat:${hsb.saturation} bri:${hsb.brightness} | ${curBright}%`;
+}
+function setBright(v){ 
+  curBright=parseInt(v); 
+  document.getElementById('brightText').textContent=v+'%'; 
+  const hsb=hexToHsb(curColor); 
+  document.getElementById('colorText').textContent=`${curColor.toUpperCase()} → hue:${hsb.hue} sat:${hsb.saturation} bri:${hsb.brightness} | ${v}%`;
+}
+function setSpeed(s){ curSpeed=s; [1,2,3,4,5].forEach(i=>{const el=document.getElementById('s'+i); if(el){el.style.background=i===s?'#fff':'rgba(255,255,255,0.08)'; el.style.color=i===s?'#000':'#fff';}}); }
+function genId(){ const n=document.getElementById('devName').value||'device'; document.getElementById('devId').value=n.toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,20)+'_'+Math.floor(Math.random()*90+10); }
+function onTypeChange(){
+  const t=document.getElementById('devType').value;
+  document.getElementById('lightOpts').style.display=t==='LIGHT'?'flex':'none';
+  document.getElementById('fanOpts').style.display=t==='FAN'?'block':'none';
+}
+function showToast(m){ const t=document.getElementById('toast'); document.getElementById('toastMsg').textContent=m; t.style.display='block'; setTimeout(()=>t.style.display='none',3000); }
+function updateTokenDisplay(){ const c=localStorage.getItem('token')||token||'No token'; document.getElementById('tokenBox').textContent=c; token=c; }
+
+function connectRealtime(){
+  if (socket) socket.disconnect();
+  token = localStorage.getItem('token');
+  if (!token) return;
+  socket = io(API, { auth: { token: token } });
+  socket.on('connect', () => { document.getElementById('liveStatus').innerHTML='● LIVE'; });
+  socket.on('disconnect', () => { document.getElementById('liveStatus').innerHTML='● OFFLINE'; });
+  socket.on('devices_updated', (newDevices) => { devices = newDevices; render(); });
+}
+
+function initDash(){ 
+  document.getElementById('authView').style.display='none'; 
+  document.getElementById('dashView').style.display='block'; 
+  document.getElementById('signoutBtn').style.display='block'; 
+  document.getElementById('userEmail').textContent=localStorage.getItem('email')||''; 
+  updateTokenDisplay(); 
+  connectRealtime();
+  loadDevices(); 
+  initDots(); 
+  onTypeChange(); 
+  setColor(curColor); 
+}
+function signout(){ 
+  if (socket) socket.disconnect();
+  localStorage.removeItem('token'); localStorage.removeItem('email'); token=null; 
+  document.getElementById('authView').style.display='block'; 
+  document.getElementById('dashView').style.display='none'; 
+  document.getElementById('signoutBtn').style.display='none'; 
+  showToast('Signed out'); 
+}
+function copyToken(){ const t=localStorage.getItem('token')||token; if(!t||t.includes('No token')){showToast('Login first');return;} navigator.clipboard.writeText(t); showToast('Token copied'); }
+async function register(){ const e=document.getElementById('email').value.trim(),p=document.getElementById('pass').value.trim(); if(!e||!p){document.getElementById('authMsg').textContent='Enter email password';return;} try{const r=await fetch(API+'/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}); const d=await r.json(); if(!r.ok){document.getElementById('authMsg').textContent=d.error;return;} localStorage.setItem('token',d.token); localStorage.setItem('email',e); token=d.token; initDash();}catch(err){document.getElementById('authMsg').textContent=err.message;} }
+async function login(){ const e=document.getElementById('email').value.trim(),p=document.getElementById('pass').value.trim(); if(!e||!p){document.getElementById('authMsg').textContent='Enter email password';return;} try{const r=await fetch(API+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})}); const d=await r.json(); if(!r.ok){document.getElementById('authMsg').textContent=d.error;return;} localStorage.setItem('token',d.token); localStorage.setItem('email',e); token=d.token; initDash();}catch(err){document.getElementById('authMsg').textContent=err.message;} }
+
+async function loadDevices(){
+  token=localStorage.getItem('token')||token;
+  if(!token||token.includes('No token')) return;
+  try{
+    const r=await fetch(API+'/api/devices',{headers:{Authorization:'Bearer '+token}});
+    if(!r.ok){ if(r.status===401){showToast('Login again'); signout(); return;} throw new Error('Failed'); }
+    const data=await r.json(); devices=Array.isArray(data)?data:data.devices||[]; render();
+  }catch(err){ console.error(err); }
+}
+
+function render(){
+  updateTokenDisplay();
+  document.getElementById('myDevCount').textContent=devices.length;
+  document.getElementById('devices').innerHTML=devices.map(d=>{
+    const col=d.color;
+    const hex=col?hsbToHex(col.hue,col.saturation,col.brightness||100):'#ffffff';
+    const isLight=d.displayCategory==='LIGHT'; const isFan=d.displayCategory==='FAN';
+    const hsbBri = col?.brightness||100;
+    return `<div class="card-inner" style="padding:16px;border:1px solid ${d.state==='ON'?'rgba(16,185,129,0.3)':'rgba(255,255,255,0.07)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;gap:10px;align-items:center">
+          <div style="width:40px;height:40px;border-radius:12px;background:${d.state==='ON'?'rgba(16,185,129,0.15)':'rgba(255,255,255,0.06)'};display:flex;align-items:center;justify-content:center;font-size:18px">${isLight?'💡':isFan?'🌀':'🔘'}</div>
+          <div><div style="font-size:13px;font-weight:600">${d.name} <span style="font-size:9px;padding:2px 6px;border-radius:10px;background:${d.state==='ON'?'rgba(16,185,129,0.2)':'rgba(255,255,255,0.1)'}">${d.displayCategory} • ${d.state}</span></div><div class="mono" style="font-size:10px;color:#71717a">${d.deviceId||d.id}</div></div>
+        </div>
+        <button onclick="delDevice('${d.id}')" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.06);border:0;color:#71717a">×</button>
+      </div>
+
+      <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.4);padding:12px 14px;border-radius:12px">
+        <div><div style="font-size:10px;color:#71717a">ON / OFF</div><div style="font-size:13px;font-weight:700;margin-top:2px">${d.state}</div></div>
+        <div class="toggle ${d.state==='ON'?'on':''}" onclick="toggleDevice('${d.id}')"><div class="toggle-dot"></div></div>
+      </div>
+
+      ${isLight?`
+      <div style="margin-top:12px;background:rgba(0,0,0,0.3);padding:12px;border-radius:12px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+          ${["#facc15","#fb7185","#a78bfa","#38bdf8","#34d399","#ffffff","#ff7a18","#ef4444"].map(c=>`<button onclick="changeColor('${d.id}','${c}')" style="width:28px;height:28px;border-radius:50%;background:${c};border:2px solid ${hex.toLowerCase()===c.toLowerCase()?'white':'rgba(255,255,255,0.1)'}"></button>`).join('')}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <div style="width:24px;height:24px;border-radius:50%;background:${hex};border:1px solid rgba(255,255,255,0.2)"></div>
+          <span class="mono" style="font-size:11px;color:#facc15;font-weight:600">hue:${col?.hue||0} sat:${col?.saturation||0} bri:${hsbBri}</span>
+        </div>
+      </div>
+      <div style="margin-top:8px;background:rgba(255,255,255,0.04);border-radius:12px;padding:12px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#71717a"><span>BRIGHTNESS</span><span>${d.brightness||80}%</span></div>
+        <input type="range" class="slider" min="5" max="100" value="${d.brightness||80}" oninput="changeBright('${d.id}',this.value)" style="width:100%;margin-top:6px">
+      </div>
+      `:''}
+
+      ${isFan?`
+      <div style="margin-top:12px;background:rgba(0,0,0,0.3);padding:12px;border-radius:12px">
+        <div style="display:flex;gap:6px">
+          ${[1,2,3,4,5].map(s=>`<button onclick="changeSpeed('${d.id}',${s})" style="flex:1;height:40px;border-radius:10px;background:${(d.speed||3)===s?'#fff':'rgba(255,255,255,0.08)'};color:${(d.speed||3)===s?'#000':'#fff'};border:0;font-weight:600">${s}</button>`).join('')}
+        </div>
+      </div>
+      `:''}
+    </div>`;
+  }).join('')||'<div style="padding:30px;text-align:center;color:#71717a;font-size:12px">No devices - Add LIGHT/FAN/SWITCH</div>';
+
+  const pins=[2,4,5,16,17,18,19,21,22,23];
+  const deviceList=devices.map((d,i)=>{
+    const col=d.color||{hue:0,saturation:0,brightness:100}; const speed=d.speed||0; const bright=d.brightness||80;
+    if(d.displayCategory==='LIGHT') return `  {"${d.deviceId||d.id}", ${pins[i%pins.length]}, "${d.displayCategory}", ${col.hue}, ${col.saturation}, ${col.brightness}, ${bright}, 0}`;
+    else if(d.displayCategory==='FAN') return `  {"${d.deviceId||d.id}", ${pins[i%pins.length]}, "${d.displayCategory}", 0, 0, 0, 0, ${speed}}`;
+    else return `  {"${d.deviceId||d.id}", ${pins[i%pins.length]}, "${d.displayCategory}", 0, 0, 0, 0, 0}`;
+  }).join('\n')||'  {"hall_light_01", 2, "LIGHT", 45, 1.0, 100, 80, 0}';
+
+  const userToken=localStorage.getItem('token')||'LOGIN_FIRST';
+  document.getElementById('codeBlock').textContent=`#include <WiFi.h>
+#include <SocketIoClient.h>
+#include <ArduinoJson.h>
+SocketIoClient socket;
+const char* WIFI_SSID = "YOUR_WIFI";
+const char* WIFI_PASS = "YOUR_PASS";
+const char* SERVER_IP = "YOUR_IP";
+const int SERVER_PORT = 3000;
+const char* USER_TOKEN = "${userToken}";
+
+struct Device { const char* id; int pin; const char* category; int hue; float sat; int hsbBri; int devBri; int speed; };
+Device devices[] = {
+${deviceList}
+};
+const int DEVICE_COUNT = ${devices.length||1};
+
+void onAlexaCommand(const char* p, size_t l){
+  DynamicJsonDocument doc(1024); deserializeJson(doc, p);
+  String id=doc["deviceId"]; String action=doc["action"];
+  int hue=doc["color"]["hue"]|0; float sat=doc["color"]["saturation"]|0; int hsbBri=doc["color"]["brightness"]|100; int devBri=doc["brightness"]|80;
+  for(int i=0;i<DEVICE_COUNT;i++) if(id==devices[i].id){
+    if(action=="TurnOn") digitalWrite(devices[i].pin, HIGH);
+    if(action=="TurnOff") digitalWrite(devices[i].pin, LOW);
+    if(action=="SetColor"){ devices[i].hue=hue; devices[i].sat=sat; devices[i].hsbBri=hsbBri; }
+    if(action=="SetBrightness"){ devices[i].devBri=devBri; }
+  }
+}
+void setup(){
+  Serial.begin(115200);
+  for(int i=0;i<DEVICE_COUNT;i++) pinMode(devices[i].pin, OUTPUT);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while(WiFi.status()!=WL_CONNECTED) delay(500);
+  socket.on("alexa_cmd", onAlexaCommand);
+  socket.begin(SERVER_IP, SERVER_PORT, "/socket.io/?EIO=4", "token="+String(USER_TOKEN));
+}
+void loop(){ socket.loop(); }
+`;
+}
+
+function copyCode(){ navigator.clipboard.writeText(document.getElementById('codeBlock').textContent); showToast('ESP code copied'); }
+
+async function addDevice(){
+  token=localStorage.getItem('token')||token;
+  const name=document.getElementById('devName').value.trim(); const type=document.getElementById('devType').value; const id=document.getElementById('devId').value.trim();
+  if(!name||!id){showToast('Enter name and ID');return;}
+  let body={name,type,id,deviceId:id};
+  if(type==='LIGHT'){ const hsb=hexToHsb(curColor); body.color={hue:hsb.hue,saturation:hsb.saturation,brightness:hsb.brightness}; body.brightness=curBright; }
+  else if(type==='FAN'){ body.speed=curSpeed; }
+  try{
+    const r=await fetch(API+'/api/devices',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error);
+    showToast('Added');
+  }catch(err){ showToast(err.message); if(err.message.includes('unauth')) signout(); }
+}
+async function delDevice(id){ token=localStorage.getItem('token')||token; await fetch(API+'/api/devices/'+id,{method:'DELETE',headers:{Authorization:'Bearer '+token}}); }
+async function toggleDevice(id){
+  token=localStorage.getItem('token')||token;
+  const d=devices.find(x=>x.id===id); if(!d) return;
+  const ns=d.state==='ON'?'OFF':'ON'; 
+  await fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:d.deviceId||d.id,action:ns==='ON'?'TurnOn':'TurnOff'})});
+}
+async function changeColor(id, hex){
+  token=localStorage.getItem('token')||token;
+  const hsb=hexToHsb(hex);
+  await fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:devices.find(x=>x.id===id).deviceId||id,action:'SetColor',color:{hue:hsb.hue,saturation:hsb.saturation,brightness:hsb.brightness}})});
+}
+async function changeBright(id, b){
+  token=localStorage.getItem('token')||token;
+  await fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:devices.find(x=>x.id===id).deviceId||id,action:'SetBrightness',brightness:parseInt(b)})});
+}
+async function changeSpeed(id, s){
+  token=localStorage.getItem('token')||token;
+  await fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:devices.find(x=>x.id===id).deviceId||id,action:'SetSpeed',speed:parseInt(s)})});
+}
+
+if(localStorage.getItem('token')){ token=localStorage.getItem('token'); document.getElementById('userEmail').textContent=localStorage.getItem('email')||''; document.getElementById('signoutBtn').style.display='block'; initDash(); }
+initDots(); onTypeChange(); setColor(curColor); updateTokenDisplay();
+</script>
+</body>
+</html>
