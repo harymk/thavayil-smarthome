@@ -122,6 +122,26 @@ function connectRealtime(){
   socket.on('connect', () => { document.getElementById('liveStatus').innerHTML='● LIVE'; });
   socket.on('disconnect', () => { document.getElementById('liveStatus').innerHTML='● OFFLINE'; });
   socket.on('devices_updated', (newDevices) => { devices = newDevices; render(); });
+  // NEW FIXED: Single device update (lightweight)
+  socket.on('device_updated', (updated) => {
+    console.log('device_updated', updated);
+    const idx = devices.findIndex(d => d.id === updated.id || d.deviceId === updated.id);
+    if(idx >= 0) devices[idx] = {...devices[idx], ...updated};
+    else devices.push(updated);
+    render();
+  });
+  socket.on('devices_updated_single', (updated) => {
+    console.log('devices_updated_single', updated);
+    const idx = devices.findIndex(d => d.id === updated.id || d.deviceId === updated.id);
+    if(idx >= 0) devices[idx] = {...devices[idx], ...updated};
+    else devices.push(updated);
+    render();
+  });
+  socket.on('device_deleted', (data) => {
+    console.log('device_deleted', data);
+    devices = devices.filter(d => d.id !== data.id);
+    render();
+  });
 }
 
 function initDash(){ 
