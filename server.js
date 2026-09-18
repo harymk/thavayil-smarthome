@@ -97,6 +97,17 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
+// PRIVACY & TERMS FOR ALEXA PUBLISH
+app.get('/privacy',(req,res)=>{
+  res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif;line-height:1.6"><h1>Thavayil Electronics - SmartHome Privacy Policy</h1><p>Last updated: 2026</p><h2>1. Data Collection</h2><p>We collect email and device states (ON/OFF, brightness, color) to control your smart devices via Alexa.</p><h2>2. Use</h2><p>Your data is used only to provide smart home control. We do not sell or share data.</p><h2>3. Alexa</h2><p>When you link Alexa, Amazon shares a token to control devices. We store device states locally in db.json.</p><h2>4. Security</h2><p>Passwords stored securely, tokens JWT signed.</p><h2>5. Contact</h2><p>Email: thavayil.ckm@gmail.com, Kodancherry, Kerala, India</p></div>`);
+});
+app.get('/terms',(req,res)=>{
+  res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Terms of Use</h1><p>Thavayil SmartHome is provided as-is for controlling ESP devices. User is responsible for device safety.</p></div>`);
+});
+app.get('/support',(req,res)=>{
+  res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Support</h1><p>For support contact: thavayil.ckm@gmail.com<br>Website: https://thavayil-smarthome.onrender.com</p><h2>How to use</h2><ol><li>Register at our website</li><li>Add devices (Light/Fan)</li><li>Link Alexa skill</li><li>Say "Alexa, turn light on"</li></ol></div>`);
+});
+
 // AUTH
 app.post('/auth/register',(req,res)=>{
   const db=readDB(); const {email,password}=req.body;
