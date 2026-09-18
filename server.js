@@ -310,14 +310,29 @@ app.post('/alexa/smarthome', (req,res)=>{
 
     if(ns==='Alexa' && name==='ReportState'){
       const endpointId=directive.endpoint.endpointId;
+      console.log(`ReportState for ${endpointId} user=${userId}`);
       let dev=db.devices.find(d=>d.id===endpointId && d.userId===userId);
+      console.log('Found dev for ReportState:', dev ? JSON.stringify(dev) : 'NOT FOUND!');
+      if(!dev){
+        // Try without userId check - maybe token mismatch
+        dev=db.devices.find(d=>d.id===endpointId);
+        console.log('Try without userId:', dev ? 'FOUND but wrong user!' : 'not found at all');
+      }
       let props=[];
       if(dev){
         props.push({namespace:'Alexa.PowerController',name:'powerState',value:dev.state==='ON'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-        if(dev.brightness) props.push({namespace:'Alexa.BrightnessController',name:'brightness',value:dev.brightness,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-        if(dev.color) props.push({namespace:'Alexa.ColorController',name:'color',value:{hue:dev.color.hue,saturation:dev.color.saturation,brightness:dev.color.brightness/100},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-        if(dev.speed) props.push({namespace:'Alexa.PercentageController',name:'percentage',value:dev.speed*20,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+        // FIX: check !== undefined not truthy - 0 brightness is valid!
+        if(dev.brightness!==undefined && dev.brightness!==null) {
+          props.push({namespace:'Alexa.BrightnessController',name:'brightness',value:parseInt(dev.brightness),timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+        }
+        if(dev.color) {
+          props.push({namespace:'Alexa.ColorController',name:'color',value:{hue:dev.color.hue||0,saturation:dev.color.saturation||0,brightness:(dev.color.brightness||100)/100},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+        }
+        if(dev.speed!==undefined) {
+          props.push({namespace:'Alexa.PercentageController',name:'percentage',value:(dev.speed||3)*20,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+        }
       }
+      console.log('ReportState props:', JSON.stringify(props));
       return res.json({context:{properties:props},event:{header:{namespace:'Alexa',name:'StateReport',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}}});
     }
 
