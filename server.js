@@ -7,10 +7,7 @@ const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { 
-  cors: { origin: "*", methods: ["GET","POST"] },
-  transports: ["websocket", "polling"]
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
 const JWT_SECRET_NEW = 'thavayil-smarthome-secret-2024-fixed';
 const JWT_SECRET_OLD = 'my-super-secret-123-change-this';
@@ -57,28 +54,26 @@ function verifyToken(token) {
   catch(e) { try { return jwt.verify(token, JWT_SECRET_OLD); } catch(e2) { throw e2; } }
 }
 
-function emitToUser(userId) {
-  const db = readDB();
-  const devices = db.devices.filter(d => d.userId === userId);
-  io.to('user_'+userId).emit('devices_updated', devices);
+// OLD - sends whole DB (heavy for ESP)
+// function emitToUser(userId) {
+//   const db = readDB();
+//   const devices = db.devices.filter(d => d.userId === userId);
+//   io.to('user_'+userId).emit('devices_updated', devices);
+// }
+
+// NEW - FIXED: Only send changed device (lightweight for ESP8266)
+function emitSingleDevice(userId, device) {
+  // For ESP8266 - only 1 device object (not array)
+  io.to('user_'+userId).emit('device_updated', device);
+  // For dashboard - also send single (dashboard should update single card)
+  // Keep devices_updated for backward compatibility but with single device
+  io.to('user_'+userId).emit('devices_updated_single', device);
 }
 
-function emitAllUsersFromDB() {
-  const now = Date.now();
-  if (now - lastEmitTime < 500) return;
-  lastEmitTime = now;
-  try {
-    const content = fs.readFileSync(DB_FILE, 'utf8');
-    if (content === lastDBContent) return;
-    lastDBContent = content;
-    const db = JSON.parse(content);
-    const userIds = [...new Set((db.devices||[]).map(d => d.userId).concat((db.users||[]).map(u => u.id)))];
-    userIds.forEach(userId => {
-      if (!userId) return;
-      const devices = (db.devices||[]).filter(d => d.userId === userId);
-      io.to('user_'+userId).emit('devices_updated', devices);
-    });
-  } catch(e) {}
+function emitAllDevicesOnce(userId) {
+  const db = readDB();
+  const devices = db.devices.filter(d => d.userId === userId);
+  io.to('user_'+userId).emit('devices_updated', devices); // Only on connect
 }
 
 app.use(cors());
@@ -158,15 +153,16 @@ app.post('/api/devices', authMiddleware, (req, res) => {
     newDevice.brightness = brightness !== undefined ? parseInt(brightness) : 80;
   } else if (upperType === 'FAN') newDevice.speed = speed ? parseInt(speed) : 3;
   db.devices.push(newDevice); writeDB(db);
-  emitToUser(req.user.userId);
+  emitSingleDevice(req.user.userId, newDevice);
   res.json(newDevice);
 });
 
 app.delete('/api/devices/:id', authMiddleware, (req, res) => {
   const db = readDB(); 
+  const deleted = db.devices.find(d => d.id === req.params.id && d.userId === req.user.userId);
   db.devices = db.devices.filter(d => !(d.id === req.params.id && d.userId === req.user.userId));
   writeDB(db); 
-  emitToUser(req.user.userId);
+  if(deleted) io.to('user_'+req.user.userId).emit('device_deleted', { id: req.params.id });
   res.json({ success: true });
 });
 
@@ -179,6 +175,7 @@ app.post('/api/device/control', authMiddleware, (req, res) => {
     hsb = { hue: parseInt(color.hue), saturation: parseFloat(color.saturation), brightness: parseInt(color.brightness||100) };
   }
   
+  // Send alexa command to ESP
   io.to('user_'+req.user.userId).emit('alexa_cmd', { deviceId, action, color: hsb, brightness, speed });
   
   let dev = db.devices.find(d => d.id === deviceId && d.userId === req.user.userId);
@@ -193,8 +190,9 @@ app.post('/api/device/control', authMiddleware, (req, res) => {
     }
     if (speed !== undefined && dev.type === 'FAN') dev.speed = parseInt(speed);
     writeDB(db); 
+    // FIXED: Only send changed device, not whole DB
+    emitSingleDevice(req.user.userId, dev);
   }
-  emitToUser(req.user.userId);
   res.json({ success: true, device: dev });
 });
 
@@ -210,12 +208,13 @@ io.use((socket, next) => {
 io.on('connection', (socket) => { 
   socket.join('user_'+socket.userId);
   const db = readDB();
+  // Send full list ONLY once on connect (for dashboard initial load)
   socket.emit('devices_updated', db.devices.filter(d => d.userId === socket.userId));
+  console.log('User connected:', socket.userId);
 });
 
-try { lastDBContent = fs.readFileSync(DB_FILE, 'utf8'); } catch(e) { lastDBContent = ''; }
-fs.watchFile(DB_FILE, { interval: 500 }, (curr, prev) => {
-  if (curr.mtimeMs !== prev.mtimeMs) emitAllUsersFromDB();
-});
+// DISABLE file watcher that was spamming whole DB
+// fs.watchFile(DB_FILE, ...) REMOVED
 
-server.listen(3000, () => console.log('Thavayil SmartHome - http://localhost:3000'));
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log('Thavayil SmartHome FIXED - Only single device emit - http://localhost:'+PORT));
