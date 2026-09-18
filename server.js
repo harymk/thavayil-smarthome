@@ -28,10 +28,57 @@ function verifyToken(t){
   catch(e){ return jwt.verify(t, JWT_SECRET_OLD); }
 }
 
+let alexaTokens = {}; // userId -> latest Alexa Bearer token for proactive reports
+
 function emitDevice(userId, dev){
   io.to('user_'+userId).emit('device_updated', dev);
   io.to('user_'+userId).emit('devices_updated_single', dev);
   io.to('user_'+userId).emit('devices_updated', readDB().devices.filter(d=>d.userId===userId));
+  // Try to push to Alexa app proactively
+  sendAlexaChangeReport(userId, dev);
+}
+
+async function sendAlexaChangeReport(userId, dev){
+  try{
+    const token = alexaTokens[userId];
+    if(!token){
+      console.log(`No Alexa token for ${userId}, skip proactive report`);
+      return;
+    }
+    const https = require('https');
+    let properties = [];
+    properties.push({namespace:'Alexa.PowerController',name:'powerState',value:dev.state==='ON'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+    if(dev.type==='LIGHT' && dev.brightness!==undefined){
+      properties.push({namespace:'Alexa.BrightnessController',name:'brightness',value:dev.brightness,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+    }
+    if(dev.type==='LIGHT' && dev.color){
+      properties.push({namespace:'Alexa.ColorController',name:'color',value:{hue:dev.color.hue,saturation:dev.color.saturation,brightness:dev.color.brightness/100},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+    }
+    if(dev.type==='FAN' && dev.speed){
+      properties.push({namespace:'Alexa.PercentageController',name:'percentage',value:dev.speed*20,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
+    }
+    const event = {
+      context:{properties},
+      event:{
+        header:{namespace:'Alexa',name:'ChangeReport',payloadVersion:'3',messageId:Date.now().toString()},
+        endpoint:{endpointId:dev.id,scope:{type:'BearerToken',token}},
+        payload:{change:{cause:{type:'APP_INTERACTION'},properties}}
+      }
+    };
+    const data = JSON.stringify(event);
+    const options = {
+      hostname:'api.amazonalexa.com',
+      path:'/v3/events',
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,'Content-Length':Buffer.byteLength(data)}
+    };
+    // Try EU endpoint if US fails, Alexa will route, but we try api.amazonalexa.com first
+    const req = https.request(options, res=>{
+      let b=''; res.on('data',d=>b+=d); res.on('end',()=>console.log(`Proactive report to Alexa for ${dev.id} -> ${res.statusCode} ${b}`));
+    });
+    req.on('error',e=>console.log('Proactive report error',e.message));
+    req.write(data); req.end();
+  }catch(e){ console.log('sendAlexaChangeReport error',e.message); }
 }
 
 function hexToHsb(hex){
@@ -151,10 +198,16 @@ app.post('/alexa/smarthome', (req,res)=>{
     const token=auth.replace('Bearer ','');
     let decoded; try{ decoded=verifyToken(token); }catch(e){ console.log('Token verify fail',e.message); return res.status(401).json({error:'invalid token'}); }
     const userId=decoded.userId;
-    const db=readDB();
+    // Save token for proactive reports - extract Alexa's token from directive if present
     const directive=req.body.directive;
     if(!directive) return res.status(400).json({error:'no directive'});
     const header=directive.header; const ns=header.namespace; const name=header.name;
+    const db=readDB();
+    // Store Alexa token for proactive ChangeReport
+    try{
+      let alexaToken = directive.payload?.scope?.token || directive.endpoint?.scope?.token || token;
+      if(alexaToken) { alexaTokens[userId]=alexaToken; console.log(`Saved Alexa token for ${userId}`); }
+    }catch(e){}
     console.log(`ALEXA ${ns}.${name} user=${userId}`);
 
     if(ns==='Alexa.Authorization' && name==='AcceptGrant'){
