@@ -12,9 +12,8 @@ const io = new Server(server, { cors: { origin: "*" } });
 const JWT_SECRET_NEW = 'thavayil-smarthome-secret-2024-fixed';
 const JWT_SECRET_OLD = 'my-super-secret-123-change-this';
 
-<<<<<<< HEAD
 // ============= MONGODB SETUP =============
-const MONGO_URL = process.env.MONGODB_URI; // Add this in Render ENV
+const MONGO_URL = process.env.MONGODB_URI;
 if(!MONGO_URL) console.log("WARNING: MONGODB_URI not set!");
 
 mongoose.connect(MONGO_URL).then(()=> console.log("MongoDB Connected - Permanent DB")).catch(e=> console.log(e));
@@ -33,20 +32,11 @@ const DeviceSchema = new mongoose.Schema({
   brightness: Number,
   speed: Number,
   createdAt: String
-}, { strict: false }); // allow any field
+}, { strict: false });
 
 const User = mongoose.model('User', UserSchema);
 const Code = mongoose.model('Code', CodeSchema);
 const Device = mongoose.model('Device', DeviceSchema);
-
-// helpers to keep your old logic same
-async function readDB(){
-  const [users, codes, devices] = await Promise.all([User.find(), Code.find(), Device.find()]);
-  return { users, codes, devices };
-}
-async function getUserDevices(userId){
-  return await Device.find({ userId });
-}
 
 function verifyToken(t){
   try{ return jwt.verify(t, JWT_SECRET_NEW); }
@@ -55,49 +45,22 @@ function verifyToken(t){
 
 let alexaTokens = {};
 
+async function getUserDevices(userId){
+  return await Device.find({ userId });
+}
+
 async function emitDevice(userId, dev){
   const userDevices = await getUserDevices(userId);
   io.to('user_'+userId).emit('device_updated', dev);
   io.to('user_'+userId).emit('devices_updated_single', dev);
   io.to('user_'+userId).emit('devices_updated', userDevices);
-=======
-function readDB(){
-  if(!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify({users:[],codes:[],devices:[]},null,2));
-  try{
-    const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8'));
-    if(!d.users) d.users=[]; if(!d.codes) d.codes=[]; if(!d.devices) d.devices=[];
-    return d;
-  }catch(e){ return {users:[],codes:[],devices:[]}; }
-}
-function writeDB(d){ fs.writeFileSync(DB_FILE, JSON.stringify(d,null,2)); }
-
-function verifyToken(t){
-  try{ return jwt.verify(t, JWT_SECRET_NEW); }
-  catch(e){ return jwt.verify(t, JWT_SECRET_OLD); }
-}
-
-let alexaTokens = {}; // userId -> latest Alexa Bearer token for proactive reports
-
-function emitDevice(userId, dev){
-  io.to('user_'+userId).emit('device_updated', dev);
-  io.to('user_'+userId).emit('devices_updated_single', dev);
-  io.to('user_'+userId).emit('devices_updated', readDB().devices.filter(d=>d.userId===userId));
-  // Try to push to Alexa app proactively
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
   sendAlexaChangeReport(userId, dev);
 }
 
 async function sendAlexaChangeReport(userId, dev){
   try{
     const token = alexaTokens[userId];
-<<<<<<< HEAD
     if(!token) return;
-=======
-    if(!token){
-      console.log(`No Alexa token for ${userId}, skip proactive report`);
-      return;
-    }
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
     const https = require('https');
     let properties = [];
     properties.push({namespace:'Alexa.PowerController',name:'powerState',value:dev.state==='ON'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
@@ -119,7 +82,6 @@ async function sendAlexaChangeReport(userId, dev){
       }
     };
     const data = JSON.stringify(event);
-<<<<<<< HEAD
     const endpoints = ['api.amazonalexa.com', 'api.eu.amazonalexa.com'];
     endpoints.forEach(hostname => {
       const options = {
@@ -128,19 +90,6 @@ async function sendAlexaChangeReport(userId, dev){
       };
       const req = https.request(options, res=>{
         let b=''; res.on('data',d=>b+=d); res.on('end',()=>console.log(`Proactive report ${hostname} for ${dev.id} -> ${res.statusCode}`));
-=======
-    // Send to both US and EU gateways - EU is needed for Europe/India skills
-    const endpoints = ['api.amazonalexa.com', 'api.eu.amazonalexa.com'];
-    endpoints.forEach(hostname => {
-      const options = {
-        hostname,
-        path:'/v3/events',
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,'Content-Length':Buffer.byteLength(data)}
-      };
-      const req = https.request(options, res=>{
-        let b=''; res.on('data',d=>b+=d); res.on('end',()=>console.log(`Proactive report ${hostname} for ${dev.id} -> ${res.statusCode} ${b.substring(0,200)}`));
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
       });
       req.on('error',e=>console.log(`Proactive report error ${hostname}`,e.message));
       req.write(data); req.end();
@@ -161,7 +110,6 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-<<<<<<< HEAD
 app.get('/privacy',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif;line-height:1.6"><h1>Thavayil Electronics - SmartHome Privacy Policy</h1><p>Last updated: 2026</p><h2>1. Data Collection</h2><p>We collect email and device states.</p><h2>2. Use</h2><p>Used only for smart home control.</p><h2>3. Alexa</h2><p>Token stored for proactive reports.</p><h2>4. Security</h2><p>Passwords stored securely, JWT signed.</p><h2>5. Contact</h2><p>thavayil.ckm@gmail.com, Kodancherry, Kerala, India</p></div>`); });
 app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Terms of Use</h1><p>Thavayil SmartHome is provided as-is.</p></div>`); });
 app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Support</h1><p>thavayil.ckm@gmail.com<br>https://thavayil-smarthome.onrender.com</p></div>`); });
@@ -171,36 +119,13 @@ app.post('/auth/register', async (req,res)=>{
   const {email,password}=req.body;
   if(!email||!password) return res.status(400).json({error:'email pass required'});
   if(await User.findOne({email})) return res.status(400).json({error:'user exists, login'});
-=======
-// PRIVACY & TERMS FOR ALEXA PUBLISH
-app.get('/privacy',(req,res)=>{
-  res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif;line-height:1.6"><h1>Thavayil Electronics - SmartHome Privacy Policy</h1><p>Last updated: 2026</p><h2>1. Data Collection</h2><p>We collect email and device states (ON/OFF, brightness, color) to control your smart devices via Alexa.</p><h2>2. Use</h2><p>Your data is used only to provide smart home control. We do not sell or share data.</p><h2>3. Alexa</h2><p>When you link Alexa, Amazon shares a token to control devices. We store device states locally in db.json.</p><h2>4. Security</h2><p>Passwords stored securely, tokens JWT signed.</p><h2>5. Contact</h2><p>Email: thavayil.ckm@gmail.com, Kodancherry, Kerala, India</p></div>`);
-});
-app.get('/terms',(req,res)=>{
-  res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Terms of Use</h1><p>Thavayil SmartHome is provided as-is for controlling ESP devices. User is responsible for device safety.</p></div>`);
-});
-app.get('/support',(req,res)=>{
-  res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Support</h1><p>For support contact: thavayil.ckm@gmail.com<br>Website: https://thavayil-smarthome.onrender.com</p><h2>How to use</h2><ol><li>Register at our website</li><li>Add devices (Light/Fan)</li><li>Link Alexa skill</li><li>Say "Alexa, turn light on"</li></ol></div>`);
-});
-
-// AUTH
-app.post('/auth/register',(req,res)=>{
-  const db=readDB(); const {email,password}=req.body;
-  if(!email||!password) return res.status(400).json({error:'email pass required'});
-  if(db.users.find(u=>u.email===email)) return res.status(400).json({error:'user exists, login'});
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
   const user={id:Date.now().toString(),email,password};
   await User.create(user);
   const token=jwt.sign({userId:user.id,email}, JWT_SECRET_NEW, {noTimestamp:true});
   res.json({token,userId:user.id});
 });
-<<<<<<< HEAD
 app.post('/auth/login', async (req,res)=>{
   const user=await User.findOne({email:req.body.email, password:req.body.password});
-=======
-app.post('/auth/login',(req,res)=>{
-  const db=readDB(); const user=db.users.find(u=>u.email===req.body.email && u.password===req.body.password);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
   if(!user) return res.status(401).json({error:'invalid login'});
   const token=jwt.sign({userId:user.id,email:user.email}, JWT_SECRET_NEW, {noTimestamp:true});
   res.json({token,userId:user.id});
@@ -211,7 +136,6 @@ app.get('/oauth/authorize',(req,res)=>{
   const {redirect_uri,state}=req.query;
   res.send(`<div style="font-family:sans-serif;padding:40px;max-width:400px;margin:60px auto;background:#14141e;color:#fff;border-radius:20px;text-align:center"><h2>Thavayil SmartHome</h2><p>Link to Alexa</p><form method="POST" action="/oauth/authorize?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}"><input name="email" placeholder="Email" style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0"/><br/><input name="password" type="password" placeholder="Password" style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0"/><br/><button style="width:100%;padding:14px;background:#00d9ff;color:#000;border-radius:10px;border:0;font-weight:700;margin-top:10px">Link Account</button></form></div>`);
 });
-<<<<<<< HEAD
 app.post('/oauth/authorize', async (req,res)=>{
   const user=await User.findOne({email:req.body.email, password:req.body.password});
   if(!user) return res.send('Invalid credentials <a href="javascript:history.back()">Back</a>');
@@ -221,17 +145,6 @@ app.post('/oauth/authorize', async (req,res)=>{
 });
 app.post('/oauth/token', async (req,res)=>{
   const entry=await Code.findOne({code:req.body.code});
-=======
-app.post('/oauth/authorize',(req,res)=>{
-  const db=readDB(); const user=db.users.find(u=>u.email===req.body.email && u.password===req.body.password);
-  if(!user) return res.send('Invalid credentials <a href="javascript:history.back()">Back</a>');
-  const code=Math.random().toString(36).substring(8);
-  db.codes.push({code,userId:user.id,exp:Date.now()+600000}); writeDB(db);
-  res.redirect(`${req.query.redirect_uri}?code=${code}&state=${req.query.state}`);
-});
-app.post('/oauth/token',(req,res)=>{
-  const db=readDB(); const entry=db.codes.find(c=>c.code===req.body.code);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
   if(!entry) return res.status(400).json({error:'invalid code'});
   const token=jwt.sign({userId:entry.userId}, JWT_SECRET_NEW, {noTimestamp:true});
   res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
@@ -242,22 +155,12 @@ function authMiddleware(req,res,next){
     const token=req.headers.authorization?.replace('Bearer ','');
     if(!token) throw new Error('no token');
     req.user=verifyToken(token); next();
-<<<<<<< HEAD
   }catch(e){ res.status(401).json({error:'unauth - login again'}); }
 }
 
 // DEVICES API
 app.get('/api/devices', authMiddleware, async (req,res)=>{
   const devs=await Device.find({userId:req.user.userId});
-=======
-  }catch(e){ console.log('AUTH FAIL',e.message); res.status(401).json({error:'unauth - login again'}); }
-}
-
-// DEVICES API - FIXED SINGLE DEVICE LIVE UPDATE
-app.get('/api/devices', authMiddleware, (req,res)=>{
-  const db=readDB(); const devs=db.devices.filter(d=>d.userId===req.user.userId);
-  console.log(`GET devices user ${req.user.userId} -> ${devs.length}`);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
   res.json(devs);
 });
 app.post('/api/devices', authMiddleware, async (req,res)=>{
@@ -273,7 +176,6 @@ app.post('/api/devices', authMiddleware, async (req,res)=>{
     if(brightness) hsb.brightness=parseInt(brightness);
     dev.color=hsb; dev.brightness=hsb.brightness;
   }else if(upper==='FAN'){ dev.speed=speed?parseInt(speed):3; }
-<<<<<<< HEAD
   const created = await Device.create(dev);
   await emitDevice(req.user.userId, created);
   res.json(created);
@@ -288,46 +190,19 @@ app.post('/api/device/control', authMiddleware, async (req,res)=>{
   let hsb=null;
   if(color&&typeof color==='object'&&color.hue!==undefined) hsb={hue:parseInt(color.hue),saturation:parseFloat(color.saturation),brightness:parseInt(color.brightness||100)};
   let dev=await Device.findOne({id:deviceId, userId:req.user.userId});
-=======
-  db.devices.push(dev); writeDB(db);
-  console.log('Device added',dev);
-  emitDevice(req.user.userId, dev);
-  res.json(dev);
-});
-app.delete('/api/devices/:id', authMiddleware, (req,res)=>{
-  const db=readDB(); const before=db.devices.length;
-  db.devices=db.devices.filter(d=>!(d.id===req.params.id && d.userId===req.user.userId));
-  writeDB(db);
-  io.to('user_'+req.user.userId).emit('device_deleted',{id:req.params.id});
-  console.log(`DELETE ${req.params.id} ${before}->${db.devices.length}`);
-  res.json({success:true});
-});
-app.post('/api/device/control', authMiddleware, (req,res)=>{
-  const db=readDB(); const {deviceId,action,color,brightness,speed}=req.body;
-  console.log('CONTROL',deviceId,action);
-  let hsb=null;
-  if(color&&typeof color==='object'&&color.hue!==undefined) hsb={hue:parseInt(color.hue),saturation:parseFloat(color.saturation),brightness:parseInt(color.brightness||100)};
-  let dev=db.devices.find(d=>d.id===deviceId && d.userId===req.user.userId);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
   if(dev){
     if(action==='TurnOn') dev.state='ON';
     if(action==='TurnOff') dev.state='OFF';
     if(hsb&&dev.type==='LIGHT'){ dev.color=hsb; dev.brightness=hsb.brightness; }
     if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); if(!action) dev.state='ON'; }
     if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
-<<<<<<< HEAD
     await dev.save();
     await emitDevice(req.user.userId, dev);
-=======
-    writeDB(db);
-    emitDevice(req.user.userId, dev);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
     io.to('user_'+req.user.userId).emit('alexa_cmd',{deviceId,action:action||'TurnOn',color:hsb,brightness,speed});
   }
   res.json({success:true,device:dev});
 });
 
-<<<<<<< HEAD
 // ALEXA SMART HOME
 app.post('/alexa/smarthome', async (req,res)=>{
   try{
@@ -343,41 +218,12 @@ app.post('/alexa/smarthome', async (req,res)=>{
       let alexaToken = directive.payload?.scope?.token || directive.endpoint?.scope?.token || token;
       if(alexaToken) alexaTokens[userId]=alexaToken;
     }catch(e){}
-=======
-// ================= ALEXA SMART HOME ENDPOINT =================
-app.post('/alexa/smarthome', (req,res)=>{
-  console.log('=== ALEXA REQUEST ===', JSON.stringify(req.body).substring(0,500));
-  try{
-    const auth=req.headers.authorization;
-    if(!auth) { console.log('No auth header'); return res.status(401).json({error:'no auth'}); }
-    const token=auth.replace('Bearer ','');
-    let decoded; try{ decoded=verifyToken(token); }catch(e){ console.log('Token verify fail',e.message); return res.status(401).json({error:'invalid token'}); }
-    const userId=decoded.userId;
-    // Save token for proactive reports - extract Alexa's token from directive if present
-    const directive=req.body.directive;
-    if(!directive) return res.status(400).json({error:'no directive'});
-    const header=directive.header; const ns=header.namespace; const name=header.name;
-    const db=readDB();
-    // Store Alexa token for proactive ChangeReport
-    try{
-      let alexaToken = directive.payload?.scope?.token || directive.endpoint?.scope?.token || token;
-      if(alexaToken) { alexaTokens[userId]=alexaToken; console.log(`Saved Alexa token for ${userId}`); }
-    }catch(e){}
-    console.log(`ALEXA ${ns}.${name} user=${userId}`);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
 
     if(ns==='Alexa.Authorization' && name==='AcceptGrant'){
       return res.json({event:{header:{namespace:'Alexa.Authorization',name:'AcceptGrant.Response',payloadVersion:'3',messageId:header.messageId},payload:{}}});
     }
-<<<<<<< HEAD
     if(ns==='Alexa.Discovery' && name==='Discover'){
       const userDevices=await Device.find({userId});
-=======
-
-    if(ns==='Alexa.Discovery' && name==='Discover'){
-      const userDevices=db.devices.filter(d=>d.userId===userId);
-      console.log(`Discovery for ${userId} -> ${userDevices.length} devices`);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
       const endpoints=userDevices.map(d=>{
         let caps=[
           {type:'AlexaInterface',interface:'Alexa',version:'3'},
@@ -391,41 +237,22 @@ app.post('/alexa/smarthome', (req,res)=>{
           caps.push({type:'AlexaInterface',interface:'Alexa.PercentageController',version:'3',properties:{supported:[{name:'percentage'}],proactivelyReported:true,retrievable:true}});
         }
         return {
-<<<<<<< HEAD
           endpointId:d.id, manufacturerName:'Thavayil Electronics', friendlyName:d.name,
           description:`${d.type} via Thavayil SmartHome`, displayCategories:[d.displayCategory||'SWITCH'], capabilities:caps
-=======
-          endpointId:d.id,
-          manufacturerName:'Thavayil Electronics',
-          friendlyName:d.name,
-          description:`${d.type} via Thavayil SmartHome`,
-          displayCategories:[d.displayCategory||'SWITCH'],
-          capabilities:caps
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
         };
       });
       return res.json({event:{header:{namespace:'Alexa.Discovery',name:'Discover.Response',payloadVersion:'3',messageId:header.messageId},payload:{endpoints}}});
     }
-<<<<<<< HEAD
     if(ns==='Alexa.PowerController'){
       const endpointId=directive.endpoint.endpointId;
       const action=name==='TurnOn'?'TurnOn':'TurnOff';
       let dev=await Device.findOne({id:endpointId, userId});
       if(dev){ dev.state=action==='TurnOn'?'ON':'OFF'; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action}); }
-=======
-
-    if(ns==='Alexa.PowerController'){
-      const endpointId=directive.endpoint.endpointId;
-      const action=name==='TurnOn'?'TurnOn':'TurnOff';
-      let dev=db.devices.find(d=>d.id===endpointId && d.userId===userId);
-      if(dev){ dev.state=action==='TurnOn'?'ON':'OFF'; writeDB(db); emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action}); }
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
       return res.json({
         event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},
         context:{properties:[{namespace:'Alexa.PowerController',name:'powerState',value:action==='TurnOn'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}
       });
     }
-<<<<<<< HEAD
     if(ns==='Alexa.BrightnessController'){
       const endpointId=directive.endpoint.endpointId;
       let dev=await Device.findOne({id:endpointId, userId});
@@ -436,29 +263,6 @@ app.post('/alexa/smarthome', (req,res)=>{
          brightness = Math.min(100, Math.max(1, current + delta));
       }
       if(dev){ dev.state='ON'; dev.brightness=brightness; if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=brightness; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetBrightness',brightness}); }
-=======
-
-    if(ns==='Alexa.BrightnessController'){
-      const endpointId=directive.endpoint.endpointId;
-      let dev=db.devices.find(d=>d.id===endpointId && d.userId===userId);
-      let brightness = directive.payload.brightness;
-      if(name==='AdjustBrightness' && dev){
-         // Adjust relative: payload.brightnessDelta
-         let delta = directive.payload.brightnessDelta || 0;
-         let current = dev.brightness || 50;
-         brightness = Math.min(100, Math.max(1, current + delta));
-         console.log(`AdjustBrightness ${current} + ${delta} = ${brightness}`);
-      }
-      if(dev){ 
-         dev.state='ON'; 
-         dev.brightness=brightness; 
-         if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; 
-         dev.color.brightness=brightness; 
-         writeDB(db); 
-         emitDevice(userId,dev); 
-         io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetBrightness',brightness}); 
-      }
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
       return res.json({
         event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},
         context:{properties:[
@@ -467,47 +271,28 @@ app.post('/alexa/smarthome', (req,res)=>{
         ]}
       });
     }
-<<<<<<< HEAD
-=======
-
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
     if(ns==='Alexa.ColorController' && name==='SetColor'){
       const endpointId=directive.endpoint.endpointId;
       const color=directive.payload.color;
       let h=Math.round(color.hue); let s=parseFloat(color.saturation); let b=Math.round((color.brightness||1)*100);
-<<<<<<< HEAD
       let dev=await Device.findOne({id:endpointId, userId});
       if(dev){ dev.state='ON'; dev.color={hue:h,saturation:s,brightness:b}; dev.brightness=b; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetColor',color:{hue:h,saturation:s,brightness:b}}); }
-=======
-      let dev=db.devices.find(d=>d.id===endpointId && d.userId===userId);
-      if(dev){ dev.state='ON'; dev.color={hue:h,saturation:s,brightness:b}; dev.brightness=b; writeDB(db); emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetColor',color:{hue:h,saturation:s,brightness:b}}); }
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
       return res.json({
         event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},
         context:{properties:[{namespace:'Alexa.ColorController',name:'color',value:{hue:h,saturation:s,brightness:color.brightness},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}
       });
     }
-<<<<<<< HEAD
-=======
-
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
     if(ns==='Alexa.PercentageController'){
       const endpointId=directive.endpoint.endpointId;
       const perc=directive.payload.percentage;
       let speed=Math.ceil(perc/20); if(speed<1) speed=1; if(speed>5) speed=5;
-<<<<<<< HEAD
       let dev=await Device.findOne({id:endpointId, userId});
       if(dev){ dev.state='ON'; dev.speed=speed; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetSpeed',speed}); }
-=======
-      let dev=db.devices.find(d=>d.id===endpointId && d.userId===userId);
-      if(dev){ dev.state='ON'; dev.speed=speed; writeDB(db); emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetSpeed',speed}); }
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
       return res.json({
         event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},
         context:{properties:[{namespace:'Alexa.PercentageController',name:'percentage',value:perc,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}
       });
     }
-<<<<<<< HEAD
     if(ns==='Alexa' && name==='ReportState'){
       const endpointId=directive.endpoint.endpointId;
       let dev=await Device.findOne({id:endpointId, userId});
@@ -521,38 +306,6 @@ app.post('/alexa/smarthome', (req,res)=>{
       }
       return res.json({context:{properties:props},event:{header:{namespace:'Alexa',name:'StateReport',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}}});
     }
-=======
-
-    if(ns==='Alexa' && name==='ReportState'){
-      const endpointId=directive.endpoint.endpointId;
-      console.log(`ReportState for ${endpointId} user=${userId}`);
-      let dev=db.devices.find(d=>d.id===endpointId && d.userId===userId);
-      console.log('Found dev for ReportState:', dev ? JSON.stringify(dev) : 'NOT FOUND!');
-      if(!dev){
-        // Try without userId check - maybe token mismatch
-        dev=db.devices.find(d=>d.id===endpointId);
-        console.log('Try without userId:', dev ? 'FOUND but wrong user!' : 'not found at all');
-      }
-      let props=[];
-      if(dev){
-        props.push({namespace:'Alexa.PowerController',name:'powerState',value:dev.state==='ON'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-        // FIX: check !== undefined not truthy - 0 brightness is valid!
-        if(dev.brightness!==undefined && dev.brightness!==null) {
-          props.push({namespace:'Alexa.BrightnessController',name:'brightness',value:parseInt(dev.brightness),timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-        }
-        if(dev.color) {
-          props.push({namespace:'Alexa.ColorController',name:'color',value:{hue:dev.color.hue||0,saturation:dev.color.saturation||0,brightness:(dev.color.brightness||100)/100},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-        }
-        if(dev.speed!==undefined) {
-          props.push({namespace:'Alexa.PercentageController',name:'percentage',value:(dev.speed||3)*20,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-        }
-      }
-      console.log('ReportState props:', JSON.stringify(props));
-      return res.json({context:{properties:props},event:{header:{namespace:'Alexa',name:'StateReport',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}}});
-    }
-
-    console.log('Unsupported directive',ns,name);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
     res.status(400).json({error:'unsupported',ns,name});
   }catch(e){
     console.error('ALEXA ERROR',e);
@@ -560,18 +313,13 @@ app.post('/alexa/smarthome', (req,res)=>{
   }
 });
 
-<<<<<<< HEAD
 // SOCKET.IO
-=======
-// SOCKET.IO - FIXED FOR SINGLE DEVICE LIVE
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
 io.use((socket,next)=>{
   try{
     const token=socket.handshake.auth?.token || socket.handshake.query?.token;
     if(!token) throw new Error('no token');
     const dec=verifyToken(token);
     socket.userId=dec.userId; next();
-<<<<<<< HEAD
   }catch(e){ next(new Error('auth failed: '+e.message)); }
 });
 io.on('connection', async (socket)=>{
@@ -579,23 +327,8 @@ io.on('connection', async (socket)=>{
   socket.join('user_'+socket.userId);
   const userDevs=await Device.find({userId:socket.userId});
   socket.emit('devices_updated', userDevs);
-=======
-  }catch(e){ console.log('Socket auth fail',e.message); next(new Error('auth failed: '+e.message)); }
-});
-io.on('connection',(socket)=>{
-  console.log('ESP/DASHBOARD connected user:',socket.userId);
-  socket.join('user_'+socket.userId);
-  const db=readDB();
-  const userDevs=db.devices.filter(d=>d.userId===socket.userId);
-  socket.emit('devices_updated', userDevs);
-  console.log(`Sent ${userDevs.length} devices to ${socket.userId}`);
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
   socket.on('disconnect',()=>console.log('Disconnected',socket.userId));
 });
 
 const PORT=process.env.PORT||3000;
-<<<<<<< HEAD
 server.listen(PORT,()=>console.log(`Thavayil SmartHome MONGODB - Port ${PORT}`));
-=======
-server.listen(PORT,()=>console.log(`Thavayil SmartHome FINAL - Alexa+Live Fix - Port ${PORT}`));
->>>>>>> 077ad7b322d2bf098c77b003ed790c2063cdda6d
