@@ -143,9 +143,6 @@ app.post('/api/device/control', authMiddleware, (req,res)=>{
 });
 
 // ================= ALEXA SMART HOME ENDPOINT =================
-app.get('/alexa/smarthome', (req,res)=>{
-  res.json({status:'Thavayil Alexa endpoint ACTIVE ✅', method:'Use POST for Alexa', time:new Date().toISOString(), message:'If you see this, server.js is CORRECT! Now discover devices in Alexa app'});
-});
 app.post('/alexa/smarthome', (req,res)=>{
   console.log('=== ALEXA REQUEST ===', JSON.stringify(req.body).substring(0,500));
   try{
@@ -204,12 +201,30 @@ app.post('/alexa/smarthome', (req,res)=>{
 
     if(ns==='Alexa.BrightnessController'){
       const endpointId=directive.endpoint.endpointId;
-      const brightness=directive.payload.brightness;
       let dev=db.devices.find(d=>d.id===endpointId && d.userId===userId);
-      if(dev){ dev.state='ON'; dev.brightness=brightness; if(!dev.color) dev.color={hue:45,saturation:1,brightness}; dev.color.brightness=brightness; writeDB(db); emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetBrightness',brightness}); }
+      let brightness = directive.payload.brightness;
+      if(name==='AdjustBrightness' && dev){
+         // Adjust relative: payload.brightnessDelta
+         let delta = directive.payload.brightnessDelta || 0;
+         let current = dev.brightness || 50;
+         brightness = Math.min(100, Math.max(1, current + delta));
+         console.log(`AdjustBrightness ${current} + ${delta} = ${brightness}`);
+      }
+      if(dev){ 
+         dev.state='ON'; 
+         dev.brightness=brightness; 
+         if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; 
+         dev.color.brightness=brightness; 
+         writeDB(db); 
+         emitDevice(userId,dev); 
+         io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetBrightness',brightness}); 
+      }
       return res.json({
         event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},
-        context:{properties:[{namespace:'Alexa.BrightnessController',name:'brightness',value:brightness,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}
+        context:{properties:[
+          {namespace:'Alexa.PowerController',name:'powerState',value:'ON',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500},
+          {namespace:'Alexa.BrightnessController',name:'brightness',value:brightness,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}
+        ]}
       });
     }
 
