@@ -143,6 +143,9 @@ app.post('/api/device/control', authMiddleware, (req,res)=>{
 });
 
 // ================= ALEXA SMART HOME ENDPOINT =================
+app.get('/alexa/smarthome', (req,res)=>{
+  res.json({status:'Thavayil Alexa endpoint ACTIVE ✅', method:'Use POST for Alexa', time:new Date().toISOString(), message:'If you see this, server.js is CORRECT! Now discover devices in Alexa app'});
+});
 app.post('/alexa/smarthome', (req,res)=>{
   console.log('=== ALEXA REQUEST ===', JSON.stringify(req.body).substring(0,500));
   try{
