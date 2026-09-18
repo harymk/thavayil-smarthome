@@ -66,18 +66,21 @@ async function sendAlexaChangeReport(userId, dev){
       }
     };
     const data = JSON.stringify(event);
-    const options = {
-      hostname:'api.amazonalexa.com',
-      path:'/v3/events',
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,'Content-Length':Buffer.byteLength(data)}
-    };
-    // Try EU endpoint if US fails, Alexa will route, but we try api.amazonalexa.com first
-    const req = https.request(options, res=>{
-      let b=''; res.on('data',d=>b+=d); res.on('end',()=>console.log(`Proactive report to Alexa for ${dev.id} -> ${res.statusCode} ${b}`));
+    // Send to both US and EU gateways - EU is needed for Europe/India skills
+    const endpoints = ['api.amazonalexa.com', 'api.eu.amazonalexa.com'];
+    endpoints.forEach(hostname => {
+      const options = {
+        hostname,
+        path:'/v3/events',
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,'Content-Length':Buffer.byteLength(data)}
+      };
+      const req = https.request(options, res=>{
+        let b=''; res.on('data',d=>b+=d); res.on('end',()=>console.log(`Proactive report ${hostname} for ${dev.id} -> ${res.statusCode} ${b.substring(0,200)}`));
+      });
+      req.on('error',e=>console.log(`Proactive report error ${hostname}`,e.message));
+      req.write(data); req.end();
     });
-    req.on('error',e=>console.log('Proactive report error',e.message));
-    req.write(data); req.end();
   }catch(e){ console.log('sendAlexaChangeReport error',e.message); }
 }
 
