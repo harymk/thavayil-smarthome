@@ -12,11 +12,10 @@ const io = new Server(server, { cors: { origin: "*" } });
 const JWT_SECRET_NEW = 'thavayil-smarthome-secret-2024-fixed';
 const JWT_SECRET_OLD = 'my-super-secret-123-change-this';
 
-// ============= MONGODB SETUP =============
 const MONGO_URL = process.env.MONGODB_URI;
 if(!MONGO_URL) console.log("WARNING: MONGODB_URI not set!");
 
-mongoose.connect(MONGO_URL).then(()=> console.log("MongoDB Connected - Permanent DB")).catch(e=> console.log(e));
+mongoose.connect(MONGO_URL).then(()=> console.log("MongoDB Connected - Permanent DB")).catch(e=> console.log("MongoDB Error:", e.message));
 
 const UserSchema = new mongoose.Schema({ id: String, email: {type:String, unique:true}, password: String });
 const CodeSchema = new mongoose.Schema({ code: String, userId: String, exp: Number });
@@ -46,15 +45,17 @@ function verifyToken(t){
 let alexaTokens = {};
 
 async function getUserDevices(userId){
-  return await Device.find({ userId });
+  try{ return await Device.find({ userId }); }catch(e){ console.log("getDevices error", e.message); return []; }
 }
 
 async function emitDevice(userId, dev){
-  const userDevices = await getUserDevices(userId);
-  io.to('user_'+userId).emit('device_updated', dev);
-  io.to('user_'+userId).emit('devices_updated_single', dev);
-  io.to('user_'+userId).emit('devices_updated', userDevices);
-  sendAlexaChangeReport(userId, dev);
+  try{
+    const userDevices = await getUserDevices(userId);
+    io.to('user_'+userId).emit('device_updated', dev);
+    io.to('user_'+userId).emit('devices_updated_single', dev);
+    io.to('user_'+userId).emit('devices_updated', userDevices);
+    sendAlexaChangeReport(userId, dev);
+  }catch(e){ console.log("emitDevice error", e.message); }
 }
 
 async function sendAlexaChangeReport(userId, dev){
@@ -97,57 +98,72 @@ async function sendAlexaChangeReport(userId, dev){
   }catch(e){ console.log('sendAlexaChangeReport error',e.message); }
 }
 
-function hexToHsb(hex){
-  if(!hex) return {hue:45,saturation:1,brightness:100};
-  hex=hex.replace('#',''); const r=parseInt(hex.slice(0,2),16)/255,g=parseInt(hex.slice(2,4),16)/255,b=parseInt(hex.slice(4,6),16)/255;
-  const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0;
-  if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
-  const s=max===0?0:d/max; const v=max*100; return {hue:Math.round(h),saturation:parseFloat(s.toFixed(2)),brightness:Math.round(v)};
-}
-
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-app.get('/privacy',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif;line-height:1.6"><h1>Thavayil Electronics - SmartHome Privacy Policy</h1><p>Last updated: 2026</p><h2>1. Data Collection</h2><p>We collect email and device states.</p><h2>2. Use</h2><p>Used only for smart home control.</p><h2>3. Alexa</h2><p>Token stored for proactive reports.</p><h2>4. Security</h2><p>Passwords stored securely, JWT signed.</p><h2>5. Contact</h2><p>thavayil.ckm@gmail.com, Kodancherry, Kerala, India</p></div>`); });
-app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Terms of Use</h1><p>Thavayil SmartHome is provided as-is.</p></div>`); });
-app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Support</h1><p>thavayil.ckm@gmail.com<br>https://thavayil-smarthome.onrender.com</p></div>`); });
+app.get('/privacy',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Privacy Policy</h1><p>thavayil.ckm@gmail.com</p></div>`); });
+app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Terms</h1></div>`); });
+app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Support</h1><p>thavayil.ckm@gmail.com</p></div>`); });
+app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState===1?'connected':'disconnected'}); });
 
-// AUTH
+// AUTH WITH PROPER ERROR HANDLING
 app.post('/auth/register', async (req,res)=>{
-  const {email,password}=req.body;
-  if(!email||!password) return res.status(400).json({error:'email pass required'});
-  if(await User.findOne({email})) return res.status(400).json({error:'user exists, login'});
-  const user={id:Date.now().toString(),email,password};
-  await User.create(user);
-  const token=jwt.sign({userId:user.id,email}, JWT_SECRET_NEW, {noTimestamp:true});
-  res.json({token,userId:user.id});
-});
-app.post('/auth/login', async (req,res)=>{
-  const user=await User.findOne({email:req.body.email, password:req.body.password});
-  if(!user) return res.status(401).json({error:'invalid login'});
-  const token=jwt.sign({userId:user.id,email:user.email}, JWT_SECRET_NEW, {noTimestamp:true});
-  res.json({token,userId:user.id});
+  try{
+    const {email,password}=req.body;
+    console.log("REGISTER attempt:", email);
+    if(!email||!password) return res.status(400).json({error:'email pass required'});
+    if(mongoose.connection.readyState!==1) return res.status(500).json({error:'database not ready, wait 10 sec and retry'});
+    const exists = await User.findOne({email});
+    if(exists) return res.status(400).json({error:'user exists, please login'});
+    const user={id:Date.now().toString(),email,password};
+    await User.create(user);
+    const token=jwt.sign({userId:user.id,email}, JWT_SECRET_NEW, {noTimestamp:true});
+    console.log("REGISTER success:", email);
+    res.json({token,userId:user.id});
+  }catch(e){
+    console.error("REGISTER ERROR:", e.message);
+    res.status(500).json({error:'register failed: '+e.message});
+  }
 });
 
-// OAUTH FOR ALEXA
+app.post('/auth/login', async (req,res)=>{
+  try{
+    console.log("LOGIN attempt:", req.body.email);
+    if(mongoose.connection.readyState!==1) return res.status(500).json({error:'database not ready, wait 10 sec and retry'});
+    const user=await User.findOne({email:req.body.email, password:req.body.password});
+    if(!user) return res.status(401).json({error:'invalid login - register first'});
+    const token=jwt.sign({userId:user.id,email:user.email}, JWT_SECRET_NEW, {noTimestamp:true});
+    console.log("LOGIN success:", user.email);
+    res.json({token,userId:user.id});
+  }catch(e){
+    console.error("LOGIN ERROR:", e.message);
+    res.status(500).json({error:'login failed: '+e.message});
+  }
+});
+
+// OAUTH
 app.get('/oauth/authorize',(req,res)=>{
   const {redirect_uri,state}=req.query;
   res.send(`<div style="font-family:sans-serif;padding:40px;max-width:400px;margin:60px auto;background:#14141e;color:#fff;border-radius:20px;text-align:center"><h2>Thavayil SmartHome</h2><p>Link to Alexa</p><form method="POST" action="/oauth/authorize?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}"><input name="email" placeholder="Email" style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0"/><br/><input name="password" type="password" placeholder="Password" style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0"/><br/><button style="width:100%;padding:14px;background:#00d9ff;color:#000;border-radius:10px;border:0;font-weight:700;margin-top:10px">Link Account</button></form></div>`);
 });
 app.post('/oauth/authorize', async (req,res)=>{
-  const user=await User.findOne({email:req.body.email, password:req.body.password});
-  if(!user) return res.send('Invalid credentials <a href="javascript:history.back()">Back</a>');
-  const code=Math.random().toString(36).substring(8);
-  await Code.create({code,userId:user.id,exp:Date.now()+600000});
-  res.redirect(`${req.query.redirect_uri}?code=${code}&state=${req.query.state}`);
+  try{
+    const user=await User.findOne({email:req.body.email, password:req.body.password});
+    if(!user) return res.send('Invalid credentials <a href="javascript:history.back()">Back</a>');
+    const code=Math.random().toString(36).substring(8);
+    await Code.create({code,userId:user.id,exp:Date.now()+600000});
+    res.redirect(`${req.query.redirect_uri}?code=${code}&state=${req.query.state}`);
+  }catch(e){ res.send('Error: '+e.message); }
 });
 app.post('/oauth/token', async (req,res)=>{
-  const entry=await Code.findOne({code:req.body.code});
-  if(!entry) return res.status(400).json({error:'invalid code'});
-  const token=jwt.sign({userId:entry.userId}, JWT_SECRET_NEW, {noTimestamp:true});
-  res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
+  try{
+    const entry=await Code.findOne({code:req.body.code});
+    if(!entry) return res.status(400).json({error:'invalid code'});
+    const token=jwt.sign({userId:entry.userId}, JWT_SECRET_NEW, {noTimestamp:true});
+    res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
 
 function authMiddleware(req,res,next){
@@ -158,49 +174,62 @@ function authMiddleware(req,res,next){
   }catch(e){ res.status(401).json({error:'unauth - login again'}); }
 }
 
-// DEVICES API
 app.get('/api/devices', authMiddleware, async (req,res)=>{
-  const devs=await Device.find({userId:req.user.userId});
-  res.json(devs);
+  try{
+    const devs=await Device.find({userId:req.user.userId});
+    res.json(devs);
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
+
 app.post('/api/devices', authMiddleware, async (req,res)=>{
-  const {name,type,id,color,brightness,speed}=req.body;
-  if(!name||!type) return res.status(400).json({error:'name type required'});
-  const deviceId=id||type.toLowerCase()+'_'+Date.now().toString().slice(-4);
-  const upper=type.toUpperCase(); let cat=upper==='LIGHT'?'LIGHT':upper==='FAN'?'FAN':'SWITCH';
-  let dev={id:deviceId,deviceId,userId:req.user.userId,name,type:upper,displayCategory:cat,state:'OFF',createdAt:new Date().toISOString()};
-  if(upper==='LIGHT'){
-    let hsb={hue:45,saturation:1,brightness:100};
-    if(color&&typeof color==='object'&&color.hue!==undefined) hsb={hue:parseInt(color.hue),saturation:parseFloat(color.saturation),brightness:parseInt(color.brightness||100)};
-    else if(typeof color==='string'&&color) hsb=hexToHsb(color);
-    if(brightness) hsb.brightness=parseInt(brightness);
-    dev.color=hsb; dev.brightness=hsb.brightness;
-  }else if(upper==='FAN'){ dev.speed=speed?parseInt(speed):3; }
-  const created = await Device.create(dev);
-  await emitDevice(req.user.userId, created);
-  res.json(created);
+  try{
+    const {name,type,id,color,brightness,speed}=req.body;
+    if(!name||!type) return res.status(400).json({error:'name type required'});
+    const deviceId=id||type.toLowerCase()+'_'+Date.now().toString().slice(-4);
+    const upper=type.toUpperCase(); let cat=upper==='LIGHT'?'LIGHT':upper==='FAN'?'FAN':'SWITCH';
+    let dev={id:deviceId,deviceId,userId:req.user.userId,name,type:upper,displayCategory:cat,state:'OFF',createdAt:new Date().toISOString()};
+    if(upper==='LIGHT'){
+      let hsb={hue:45,saturation:1,brightness:100};
+      if(color&&typeof color==='object'&&color.hue!==undefined) hsb=color;
+      else if(typeof color==='string'&&color.startsWith('#')){ 
+        // simple hex to hsb
+        hsb={hue:45,saturation:1,brightness:brightness||100};
+      }
+      if(brightness) hsb.brightness=parseInt(brightness);
+      dev.color=hsb; dev.brightness=hsb.brightness;
+    }else if(upper==='FAN'){ dev.speed=speed?parseInt(speed):3; }
+    const created = await Device.create(dev);
+    await emitDevice(req.user.userId, created);
+    res.json(created);
+  }catch(e){ console.error("Add device error", e.message); res.status(500).json({error:e.message}); }
 });
+
 app.delete('/api/devices/:id', authMiddleware, async (req,res)=>{
-  await Device.deleteOne({id:req.params.id, userId:req.user.userId});
-  io.to('user_'+req.user.userId).emit('device_deleted',{id:req.params.id});
-  res.json({success:true});
+  try{
+    await Device.deleteOne({id:req.params.id, userId:req.user.userId});
+    io.to('user_'+req.user.userId).emit('device_deleted',{id:req.params.id});
+    res.json({success:true});
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
+
 app.post('/api/device/control', authMiddleware, async (req,res)=>{
-  const {deviceId,action,color,brightness,speed}=req.body;
-  let hsb=null;
-  if(color&&typeof color==='object'&&color.hue!==undefined) hsb={hue:parseInt(color.hue),saturation:parseFloat(color.saturation),brightness:parseInt(color.brightness||100)};
-  let dev=await Device.findOne({id:deviceId, userId:req.user.userId});
-  if(dev){
-    if(action==='TurnOn') dev.state='ON';
-    if(action==='TurnOff') dev.state='OFF';
-    if(hsb&&dev.type==='LIGHT'){ dev.color=hsb; dev.brightness=hsb.brightness; }
-    if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); if(!action) dev.state='ON'; }
-    if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
-    await dev.save();
-    await emitDevice(req.user.userId, dev);
-    io.to('user_'+req.user.userId).emit('alexa_cmd',{deviceId,action:action||'TurnOn',color:hsb,brightness,speed});
-  }
-  res.json({success:true,device:dev});
+  try{
+    const {deviceId,action,color,brightness,speed}=req.body;
+    let hsb=color;
+    let dev=await Device.findOne({id:deviceId, userId:req.user.userId});
+    if(!dev) dev=await Device.findOne({deviceId, userId:req.user.userId});
+    if(dev){
+      if(action==='TurnOn') dev.state='ON';
+      if(action==='TurnOff') dev.state='OFF';
+      if(hsb&&dev.type==='LIGHT'){ dev.color=hsb; dev.brightness=hsb.brightness||dev.brightness; }
+      if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); if(!action) dev.state='ON'; }
+      if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
+      await dev.save();
+      await emitDevice(req.user.userId, dev);
+      io.to('user_'+req.user.userId).emit('alexa_cmd',{deviceId,action:action||'TurnOn',color:hsb,brightness,speed});
+    }
+    res.json({success:true,device:dev});
+  }catch(e){ console.error("Control error", e.message); res.status(500).json({error:e.message}); }
 });
 
 // ALEXA SMART HOME
@@ -259,8 +288,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
       let brightness = directive.payload.brightness;
       if(name==='AdjustBrightness' && dev){
          let delta = directive.payload.brightnessDelta || 0;
-         let current = dev.brightness || 50;
-         brightness = Math.min(100, Math.max(1, current + delta));
+         brightness = Math.min(100, Math.max(1, (dev.brightness||50) + delta));
       }
       if(dev){ dev.state='ON'; dev.brightness=brightness; if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=brightness; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetBrightness',brightness}); }
       return res.json({
@@ -313,7 +341,6 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }
 });
 
-// SOCKET.IO
 io.use((socket,next)=>{
   try{
     const token=socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -325,10 +352,12 @@ io.use((socket,next)=>{
 io.on('connection', async (socket)=>{
   console.log('ESP/DASHBOARD connected user:',socket.userId);
   socket.join('user_'+socket.userId);
-  const userDevs=await Device.find({userId:socket.userId});
-  socket.emit('devices_updated', userDevs);
+  try{
+    const userDevs=await Device.find({userId:socket.userId});
+    socket.emit('devices_updated', userDevs);
+  }catch(e){ console.log("Socket fetch error", e.message); }
   socket.on('disconnect',()=>console.log('Disconnected',socket.userId));
 });
 
 const PORT=process.env.PORT||3000;
-server.listen(PORT,()=>console.log(`Thavayil SmartHome MONGODB - Port ${PORT}`));
+server.listen(PORT,()=>console.log(`Thavayil SmartHome MONGODB FIXED - Port ${PORT}`));
