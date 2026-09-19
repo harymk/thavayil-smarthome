@@ -542,6 +542,30 @@ app.get('/test/fix-color', async (req,res)=>{
     res.json({success:true, fixed, version: SERVER_VER});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
+
+app.post('/test/google-query', async (req,res)=>{
+  try{
+    const userId = req.body.userId || '1789741458155';
+    const deviceId = req.body.deviceId || '1875336409';
+    const userDevices = await Device.find({userId});
+    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
+    let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+    let h=0,s=0,v=1;
+    if(d.color){
+      if(d.color.hue!==undefined) h=d.color.hue;
+      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+      if(d.color.brightness!==undefined) v=d.color.brightness/100;
+    }
+    const bri = d.brightness||100;
+    state.brightness = bri;
+    state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
+    // Log raw db color
+    console.log('RAW DB COLOR:', JSON.stringify(d.color));
+    console.log('RETURNING STATE:', JSON.stringify(state));
+    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id;
@@ -580,6 +604,30 @@ app.get('/test/fix-color', async (req,res)=>{
     res.json({success:true, fixed, version: SERVER_VER});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
+
+app.post('/test/google-query', async (req,res)=>{
+  try{
+    const userId = req.body.userId || '1789741458155';
+    const deviceId = req.body.deviceId || '1875336409';
+    const userDevices = await Device.find({userId});
+    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
+    let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+    let h=0,s=0,v=1;
+    if(d.color){
+      if(d.color.hue!==undefined) h=d.color.hue;
+      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+      if(d.color.brightness!==undefined) v=d.color.brightness/100;
+    }
+    const bri = d.brightness||100;
+    state.brightness = bri;
+    state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
+    // Log raw db color
+    console.log('RAW DB COLOR:', JSON.stringify(d.color));
+    console.log('RETURNING STATE:', JSON.stringify(state));
+    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id;
@@ -620,6 +668,30 @@ app.get('/test/fix-color', async (req,res)=>{
     res.json({success:true, fixed, version: SERVER_VER});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
+
+app.post('/test/google-query', async (req,res)=>{
+  try{
+    const userId = req.body.userId || '1789741458155';
+    const deviceId = req.body.deviceId || '1875336409';
+    const userDevices = await Device.find({userId});
+    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
+    let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+    let h=0,s=0,v=1;
+    if(d.color){
+      if(d.color.hue!==undefined) h=d.color.hue;
+      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+      if(d.color.brightness!==undefined) v=d.color.brightness/100;
+    }
+    const bri = d.brightness||100;
+    state.brightness = bri;
+    state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
+    // Log raw db color
+    console.log('RAW DB COLOR:', JSON.stringify(d.color));
+    console.log('RETURNING STATE:', JSON.stringify(state));
+    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id;
