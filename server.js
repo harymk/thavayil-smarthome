@@ -659,6 +659,37 @@ app.post('/smarthome', (req,res)=>{
   app._router.handle(req,res);
 });
 
+
+app.get('/test/version', (req,res)=> res.json({version:'V39_COLOR_FINAL', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
+app.get('/test/query', async (req,res)=>{
+  try{
+    const id=req.query.id||'1875336409';
+    const dev=await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
+    if(!dev) return res.status(404).json({error:'device not found'});
+    let h=0,s=0,v=1;
+    if(dev.color){
+      if(dev.color.hue!==undefined) h=dev.color.hue;
+      if(dev.color.saturation!==undefined){ s=dev.color.saturation; if(s>1) s=s/100; }
+      if(dev.color.brightness!==undefined) v=dev.color.brightness/100;
+    }
+    let state={online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    res.json({deviceId:id, queryState:state, raw: dev, version:'V39', check:'ONLY spectrumHsv, NO spectrumRgb'});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.get('/test/homegraph', async (req,res)=>{
+  try{
+    const id=req.query.id||'1875336409';
+    const userId=req.query.userId||'1789741458155';
+    const dev=await Device.findOne({id:id});
+    if(!dev) return res.status(404).json({error:'device not found'});
+    await sendGoogleReportState(userId, dev);
+    res.json({ok:true, message:'ReportState sent, check Render logs for HomeGraph status', device: {id: dev.id, state: dev.state}});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.get('/test/offline/clear', async (req,res)=>{
+  try{ await OfflineState.deleteMany({}); res.json({ok:true, message:'Offline cleared'}); }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
 
 
