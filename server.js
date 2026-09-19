@@ -594,7 +594,48 @@ app.post('/google/smarthome', async (req,res)=>{
           for(let ex of cmd.execution){
             if(ex.command==='action.devices.commands.OnOff'){ d.state=ex.params.on?'ON':'OFF'; newState.on=ex.params.on; }
             if(ex.command==='action.devices.commands.BrightnessAbsolute'){ d.brightness=ex.params.brightness; d.state='ON'; newState.brightness=ex.params.brightness; newState.on=true; }
-            if(ex.command==='action.devices.commands.ColorAbsolute' && ex.params.color?.spectrumHSV){ const hsv=ex.params.color.spectrumHSV; d.color={hue:Math.round(hsv.hue), saturation:hsv.saturation, brightness:Math.round(hsv.value*100)}; d.brightness=d.color.brightness; d.state='ON'; newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}}; newState.brightness=d.brightness; newState.on=true; }
+            if(ex.command==='action.devices.commands.ColorAbsolute'){
+              console.log('COLOR COMMAND params:', JSON.stringify(ex.params));
+              let hsv = null;
+              if(ex.params.color?.spectrumHSV){
+                hsv = ex.params.color.spectrumHSV;
+                console.log('Received spectrumHSV', hsv);
+              } else if(ex.params.color?.spectrumHsv){
+                hsv = ex.params.color.spectrumHsv;
+                console.log('Received spectrumHsv', hsv);
+              } else if(ex.params.color?.spectrumRgb){
+                // Convert RGB int to HSV
+                const rgbInt = ex.params.color.spectrumRgb;
+                const r = (rgbInt >> 16) & 255;
+                const g = (rgbInt >> 8) & 255;
+                const b = rgbInt & 255;
+                console.log('Received spectrumRgb', rgbInt, '->', r,g,b);
+                // RGB to HSV conversion
+                const r1=r/255, g1=g/255, b1=b/255;
+                const max=Math.max(r1,g1,b1), min=Math.min(r1,g1,b1);
+                let h=0,s=0,v=max;
+                const d=max-min;
+                s = max===0 ? 0 : d/max;
+                if(max!==min){
+                  switch(max){
+                    case r1: h=(g1-b1)/d + (g1<b1?6:0); break;
+                    case g1: h=(b1-r1)/d + 2; break;
+                    case b1: h=(r1-g1)/d + 4; break;
+                  }
+                  h/=6;
+                }
+                hsv = {hue: Math.round(h*360), saturation: s, value: v};
+                console.log('Converted RGB to HSV', hsv);
+              }
+              if(hsv){
+                d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1,hsv.saturation)), brightness:Math.round(Math.max(0,Math.min(1,hsv.value))*100)};
+                d.brightness=d.color.brightness;
+                d.state='ON';
+                newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}};
+                newState.brightness=d.brightness;
+                newState.on=true;
+              }
+            }
             if(ex.command==='action.devices.commands.SetFanSpeed'){ d.speed=ex.params.fanSpeed; d.state='ON'; newState.currentFanSpeedSetting=d.speed; newState.on=true; }
           }
           await d.save();
