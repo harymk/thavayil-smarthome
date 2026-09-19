@@ -20,8 +20,8 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V58 CLEAN...');
-mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V58')).catch(e=>console.log('Mongo error', e.message));
+console.log('Starting V59 CLEAN...');
+mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V59')).catch(e=>console.log('Mongo error', e.message));
 
 // MODELS
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
@@ -92,7 +92,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // --- TEST ENDPOINTS (GUARANTEED) ---
-app.get('/test/version', (req,res)=> res.json({version:'V58_CLEAN_FINAL', ok:true, time:new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V59_DASHBOARD_SEPARATE', ok:true, time:new Date().toISOString()}));
 app.get('/test/google-sync/:userId', async (req,res)=>{
   try{
     const devs = await Device.find({userId:req.params.userId});
@@ -104,14 +104,14 @@ app.get('/test/offline/clear', async (req,res)=>{
     await OfflineState.deleteMany({});
     await Device.updateMany({}, {$set:{offline:false}});
     offlineDevices.clear();
-    res.json({success:true, cleared:true, version:'V58'});
+    res.json({success:true, cleared:true, version:'V59'});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 app.get('/test/offline', async (req,res)=>{
   try{
     const db = await OfflineState.find({offline:true});
     const devs = await Device.find({offline:true});
-    res.json({offlineDevices:db.map(d=>d.deviceId), offlineDeviceDocs:devs.map(d=>d.id), memory:Array.from(offlineDevices), version:'V58'});
+    res.json({offlineDevices:db.map(d=>d.deviceId), offlineDeviceDocs:devs.map(d=>d.id), memory:Array.from(offlineDevices), version:'V59'});
   }catch(e){ res.json({offlineDevices:Array.from(offlineDevices)}); }
 });
 
@@ -156,7 +156,7 @@ app.post('/api/device/control', authMw, async (req,res)=>{
     if(speed!==undefined && dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
     dev.offline=false;
     await dev.save();
-    io.to('user_'+req.user.userId).emit('device_updated', dev);
+    console.log('DASHBOARD EMIT device_updated to user_'+req.user.userId); io.to('user_'+req.user.userId).emit('device_updated', dev); io.emit('device_updated', dev);
     io.to('user_'+req.user.userId).emit('alexa_cmd', {deviceId, action, color, brightness, speed});
     res.json({success:true, device:dev});
   }catch(e){ console.log('DASH CTRL ERR', e.message); res.status(500).json({error:e.message}); }
@@ -223,16 +223,24 @@ async function googleHandler(req,res){
             const p = ex.params;
             if(ex.command==='action.devices.commands.OnOff'){ d.state=p.on?'ON':'OFF'; ns.on=p.on; }
             if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:b}; d.color.brightness=b; d.state='ON'; ns.brightness=b; ns.on=true; }
+            // V59: Color change does NOT touch brightness - separate
             if(ex.command==='action.devices.commands.ColorAbsolute' && p.color?.spectrumHSV){
               const hsv=p.color.spectrumHSV;
-              let b=Math.round(Math.max(0.05,Math.min(1,parseFloat(hsv.value)))*100); b=Math.max(5,b);
-              d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1, parseFloat(hsv.saturation)>1?parseFloat(hsv.saturation)/100:parseFloat(hsv.saturation))), brightness:b};
-              d.brightness=b; d.state='ON'; ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:b/100}}; ns.brightness=b; ns.on=true;
+              if(!d.color) d.color={hue:45, saturation:1, brightness:d.brightness||100};
+              d.color.hue=Math.round(hsv.hue)%360;
+              let s=parseFloat(hsv.saturation); if(s>1) s=s/100; d.color.saturation=Math.max(0,Math.min(1,s));
+              // Do NOT update d.brightness or d.color.brightness - keep separate
+              d.state='ON';
+              const bri = d.brightness||100;
+              ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:bri/100}};
+              ns.on=true;
+              // Keep brightness in response as current brightness, not from color
+              ns.brightness=bri;
             }
           }
           d.offline=false;
           await d.save();
-          io.to('user_'+userId).emit('device_updated', d);
+          console.log('EMIT device_updated to user_'+userId, d.id, d.state, d.brightness, d.color); io.to('user_'+userId).emit('device_updated', d); io.emit('device_updated', d); // also broadcast for dashboard without room
           outStates[d.id]=ns;
         }
       }
@@ -291,11 +299,15 @@ app.post('/alexa/smarthome', async (req,res)=>{
       console.log('ALEXA SetColor', col);
       let dev=await Device.findOne({id:eid, userId});
       if(dev){
-        let b=dev.brightness||100; if(col.brightness!==undefined){ b=Math.round(Math.max(0.05,Math.min(1,col.brightness))*100); b=Math.max(5,b); }
-        dev.color={hue:Math.round(col.hue)%360, saturation:parseFloat(col.saturation)>1?parseFloat(col.saturation)/100:parseFloat(col.saturation), brightness:b};
-        dev.brightness=b; dev.state='ON'; dev.offline=false;
+        // V59: Alexa color does NOT change brightness
+        if(!dev.color) dev.color={hue:45, saturation:1, brightness:dev.brightness||100};
+        dev.color.hue=Math.round(col.hue)%360;
+        let s=parseFloat(col.saturation); if(s>1) s=s/100; dev.color.saturation=Math.max(0,Math.min(1,s));
+        // Keep brightness as is - do NOT use col.brightness
+        dev.state='ON'; dev.offline=false;
         await dev.save(); io.to('user_'+userId).emit('device_updated', dev);
-        return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.ColorController', name:'color', value:{hue:dev.color.hue, saturation:dev.color.saturation, brightness:b/100}, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
+        const curB=dev.brightness||100;
+        return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.ColorController', name:'color', value:{hue:dev.color.hue, saturation:dev.color.saturation, brightness:curB/100}, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
       }
     }
 
@@ -303,8 +315,8 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.log('ALEXA ERR', e.message); res.status(500).json({error:e.message}); }
 });
 
-app.get('/privacy', (req,res)=> res.send('Privacy Policy - Thavayil SmartHome V58'));
-app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V58_CLEAN_FINAL LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
+app.get('/privacy', (req,res)=> res.send('Privacy Policy - Thavayil SmartHome V59'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V59_DASHBOARD_SEPARATE LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil SmartHome V58_CLEAN_FINAL Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil SmartHome V59_DASHBOARD_SEPARATE Port ${PORT}`));
