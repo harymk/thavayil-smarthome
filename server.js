@@ -6,6 +6,9 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const app = express();
+const SERVER_VER='V33_SYNC_OAUTH_FIX'; console.log('*** VERSION',SERVER_VER,'***');
+app.get('/test/version',(req,res)=> res.json({version:SERVER_VER}));
+app.get('/test/oauth',(req,res)=> res.json({version:SERVER_VER, ok:true}));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
@@ -110,9 +113,15 @@ async function sendGoogleReportState(userId, dev){
       const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
       state.currentFanSpeedSetting = map[dev.speed] || 'medium';
     }
-    if(dev.type==='LIGHT'){
+        if(dev.type==='LIGHT'){
       if(dev.brightness!==undefined) state.brightness = dev.brightness;
-      if(dev.color) state.color = { spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:(dev.color.brightness||100)/100 }};
+      let h=0,s=0,v=1;
+      if(dev.color){
+        if(dev.color.hue!==undefined) h=dev.color.hue;
+        if(dev.color.saturation!==undefined){ s=dev.color.saturation; if(s>1) s=s/100; }
+        if(dev.color.brightness!==undefined) v=dev.color.brightness/100;
+      }
+      state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
     }
     lastReportedState[userId][dev.id] = {...state, ts: Date.now() };
     console.log(`ReportState (local) ${dev.id} ->`, JSON.stringify(state));
@@ -218,11 +227,20 @@ app.post('/oauth/authorize', async (req,res)=>{
 });
 app.post('/oauth/token', async (req,res)=>{
   try{
-    const entry=await Code.findOne({code:req.body.code});
-    if(!entry) return res.status(400).json({error:'invalid code'});
-    const token=jwt.sign({userId:entry.userId}, JWT_SECRET_NEW, {noTimestamp:true});
-    res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
-  }catch(e){ res.status(500).json({error:e.message}); }
+    console.log('OAUTH TOKEN REQ:', req.body.grant_type, req.body.code ? 'has_code' : 'no_code', req.body.refresh_token ? 'has_refresh' : 'no_refresh');
+    let userId = null;
+    if(req.body.code){
+      const entry=await Code.findOne({code:req.body.code});
+      if(entry) userId = entry.userId;
+    }
+    if(!userId && req.body.refresh_token){
+      try{ const dec = jwt.verify(req.body.refresh_token, JWT_SECRET_NEW); userId = dec.userId; }catch(e){ try{ userId = jwt.decode(req.body.refresh_token)?.userId; }catch(e2){} }
+    }
+    if(!userId) return res.status(400).json({error:'invalid_grant'});
+    const token=jwt.sign({userId:userId}, JWT_SECRET_NEW, {noTimestamp:true});
+    console.log('OAUTH TOKEN OK for', userId);
+    res.json({access_token:token, refresh_token:token, token_type:'Bearer', expires_in:31536000});
+  }catch(e){ console.log('TOKEN ERROR', e.message); res.status(500).json({error:e.message}); }
 });
 
 function authMiddleware(req,res,next){
@@ -413,14 +431,20 @@ app.post('/google/smarthome', async (req,res)=>{
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-        if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 80;
-          const col = d.color || {hue:45, saturation:1, brightness: bri};
+                if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 100;
+          let h=0,s=0,v=1;
+          if(d.color){
+            if(d.color.hue!==undefined) h=d.color.hue;
+            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+            if(d.color.brightness!==undefined) v=d.color.brightness/100;
+          }
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
         }
         devicesState[q.id]=state;
       }
+      for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
@@ -623,14 +647,20 @@ app.post('/google', async (req,res)=>{
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-        if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 80;
-          const col = d.color || {hue:45, saturation:1, brightness: bri};
+                if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 100;
+          let h=0,s=0,v=1;
+          if(d.color){
+            if(d.color.hue!==undefined) h=d.color.hue;
+            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+            if(d.color.brightness!==undefined) v=d.color.brightness/100;
+          }
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
         }
         devicesState[q.id]=state;
       }
+      for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
