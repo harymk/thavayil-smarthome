@@ -1,4 +1,4 @@
-
+// routes/google.js - V65 FIX - Separate brightness + fan + attributes fix
 const express = require('express');
 const Device = require('../models/Device');
 const OfflineState = require('../models/OfflineState');
@@ -44,10 +44,11 @@ async function googleHandler(req,res){
         if(d.type==='FAN'){ const map={1:'low',2:'low',3:'medium',4:'high',5:'high'}; s.currentFanSpeedSetting=map[d.speed]||'medium'; }
         if(d.type==='LIGHT'){
           const bri = d.brightness||100;
-          let h=45, sat=1;
-          if(d.color){ if(d.color.hue!==undefined) h=d.color.hue; if(d.color.saturation!==undefined){ sat=d.color.saturation; if(sat>1) sat=sat/100; } }
+          const colorBri = d.color?.brightness||100;
+          let h=d.color?.hue||45, sat=d.color?.saturation||1;
+          if(sat>1) sat=sat/100;
           s.brightness=bri;
-          s.color={spectrumHsv:{hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,sat)), value:bri/100}};
+          s.color={spectrumHsv:{hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,sat)), value:colorBri/100}};
         }
         states[q.id]=s;
       }
@@ -65,14 +66,23 @@ async function googleHandler(req,res){
           for(const ex of cmd.execution){
             const p = ex.params;
             if(ex.command==='action.devices.commands.OnOff'){ d.state=p.on?'ON':'OFF'; ns.on=p.on; }
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:100}; /* V63 SEPARATE - don't touch color.brightness */ d.state='ON'; ns.brightness=b; ns.on=true; }
-            // V62: Color separate - don't touch brightness
+            // V65 SEPARATE: Brightness does NOT touch color
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ 
+              const b=Math.max(5,Math.min(100, parseInt(p.brightness))); 
+              d.brightness=b; 
+              if(!d.color) d.color={hue:45,saturation:1,brightness:100}; 
+              d.state='ON'; ns.brightness=b; ns.on=true; 
+            }
+            // V65 SEPARATE: Color does NOT touch brightness
             if(ex.command==='action.devices.commands.ColorAbsolute' && p.color?.spectrumHSV){
               const hsv=p.color.spectrumHSV;
-              if(!d.color) d.color={hue:45, saturation:1, brightness:d.brightness||100};
+              if(!d.color) d.color={hue:45, saturation:1, brightness:100};
               d.color.hue=Math.round(hsv.hue)%360;
               let s=parseFloat(hsv.saturation); if(s>1) s=s/100; d.color.saturation=Math.max(0,Math.min(1,s));
-              d.state='ON'; const colorBri = d.color.brightness||100; ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:colorBri/100}}; ns.on=true; // V63 SEPARATE - color doesn't return brightness
+              d.state='ON'; 
+              const colorBri=d.color.brightness||100;
+              ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:colorBri/100}}; 
+              ns.on=true;
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               if(p.fanSpeed){ const mapStr={low:2, 'low 1':1, 'low 2':2, medium:3, 'medium low':2, 'medium high':4, high:5}; d.speed=mapStr[p.fanSpeed.toLowerCase()]||3; d.state='ON'; ns.currentFanSpeedSetting=p.fanSpeed; ns.on=true; }
@@ -81,6 +91,7 @@ async function googleHandler(req,res){
           }
           d.offline=false; await d.save();
           if(global.io) global.io.to('user_'+userId).emit('device_updated', d);
+          if(global.io) global.io.emit('device_updated', d);
           outStates[d.id]=ns;
         }
       }
