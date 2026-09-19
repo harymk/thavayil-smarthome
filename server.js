@@ -89,41 +89,58 @@ app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40p
 app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState, mongoLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState], time: new Date().toISOString()}); });
 
 // AUTH - FIXED
+// TEMP DEBUG - Add this route
+app.get('/debug', async (req,res)=>{
+  res.json({
+    mongo_state: mongoose.connection.readyState,
+    mongo_states: {0:'disconnected',1:'connected',2:'connecting',3:'disconnecting'},
+    MONGO_URL_exists: !!MONGO_URL,
+    user_count: await User.countDocuments().catch(e=>e.message),
+    env: Object.keys(process.env).filter(k=>k.includes('MONGO'))
+  });
+});
+
 app.post('/auth/register', async (req,res)=>{
   try{
-    const {email,password}=req.body;
-    if(!email||!password) return res.status(400).json({error:'email pass required'});
-    const cleanEmail = email.toLowerCase().trim();
-    if(await User.findOne({email: cleanEmail})) return res.status(400).json({error:'user exists, please login'});
-    const user={id:Date.now().toString(),email:cleanEmail,password};
-    await User.create(user);
-    const token=jwt.sign({userId:user.id,email:cleanEmail}, JWT_SECRET_NEW, {noTimestamp:true});
-    console.log("REGISTERED:", cleanEmail);
-    res.json({token,userId:user.id});
-  }catch(e){ console.error("REGISTER ERROR", e); res.status(500).json({error:e.message}); }
+    console.log("REGISTER BODY:", req.body);
+    const email = (req.body.email||'').toLowerCase().trim();
+    const password = (req.body.password||'').trim();
+    if(!email||!password) return res.status(400).json({error:'email and password required'});
+    
+    const existing = await User.findOne({email});
+    if(existing) return res.status(400).json({error:'user exists, please login'});
+
+    const user={id:Date.now().toString(), email, password};
+    const created = await User.create(user);
+    console.log("CREATED USER:", created.email);
+    const token=jwt.sign({userId:created.id,email}, JWT_SECRET_NEW, {noTimestamp:true});
+    res.json({token,userId:created.id});
+  }catch(e){ 
+    console.error("REGISTER ERROR FULL:", e);
+    res.status(500).json({error: e.message, stack: e.stack}); 
+  }
 });
 
 app.post('/auth/login', async (req,res)=>{
   try{
-    const {email,password}=req.body;
+    console.log("LOGIN BODY:", req.body);
+    const email = (req.body.email||'').toLowerCase().trim();
+    const password = (req.body.password||'').trim();
     if(!email||!password) return res.status(400).json({error:'email and password required'});
-    const cleanEmail = email.toLowerCase().trim();
-    console.log("LOGIN ATTEMPT:", cleanEmail);
-    const user=await User.findOne({email: cleanEmail, password: password});
-    if(!user){
-      // fallback check with original case for old accounts
-      const user2 = await User.findOne({email: req.body.email, password: req.body.password});
-      if(!user2){ console.log("LOGIN FAILED - user not found"); return res.status(401).json({error:'invalid login - register first'}); }
-      const token=jwt.sign({userId:user2.id,email:user2.email}, JWT_SECRET_NEW, {noTimestamp:true});
-      console.log("LOGIN SUCCESS (old email format):", user2.email);
-      return res.json({token,userId:user2.id});
-    }
-    const token=jwt.sign({userId:user.id,email:user.email}, JWT_SECRET_NEW, {noTimestamp:true});
-    console.log("LOGIN SUCCESS:", cleanEmail);
-    res.json({token,userId:user.id});
-  }catch(e){ console.error("LOGIN ERROR", e); res.status(500).json({error:e.message}); }
-});
 
+    const user = await User.findOne({email});
+    console.log("FOUND USER?", !!user);
+    if(!user) return res.status(401).json({error:'user not found - register first. Checked email: '+email});
+    if(user.password !== password) return res.status(401).json({error:'wrong password'});
+
+    const token=jwt.sign({userId:user.id,email:user.email}, JWT_SECRET_NEW, {noTimestamp:true});
+    console.log("LOGIN OK:", email);
+    res.json({token,userId:user.id});
+  }catch(e){ 
+    console.error("LOGIN ERROR FULL:", e);
+    res.status(500).json({error: e.message}); 
+  }
+});
 // OAUTH
 app.get('/oauth/authorize',(req,res)=>{
   const {redirect_uri,state,client_id}=req.query;
