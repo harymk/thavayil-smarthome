@@ -20,8 +20,8 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V60 CLEAN...');
-mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V60')).catch(e=>console.log('Mongo error', e.message));
+console.log('Starting V61 CLEAN...');
+mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V61')).catch(e=>console.log('Mongo error', e.message));
 
 // MODELS
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
@@ -55,21 +55,33 @@ app.get('/oauth/authorize', (req,res)=>{
 
 app.post('/oauth/authorize', async (req,res)=>{
   try{
-    const redirect_uri = req.query.redirect_uri;
-    const state = req.query.state;
-    console.log('OAUTH POST', {email:req.body.email, redirect_uri});
-    if(!redirect_uri) return res.status(400).send('Missing redirect_uri');
-    const email = req.body.email.toLowerCase().trim();
-    let user = await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
-    if(!user){ return res.send('Invalid credentials<br><a href="javascript:history.back()">Back</a>'); }
+    let redirect_uri = req.query.redirect_uri || req.body.redirect_uri;
+    let state = req.query.state || req.body.state;
+    // Decode if encoded
+    try{ redirect_uri = decodeURIComponent(redirect_uri); }catch(e){}
+    try{ state = decodeURIComponent(state); }catch(e){}
+    console.log('OAUTH POST', {email:req.body.email, redirect_uri, state, query:req.query});
+    if(!redirect_uri){
+      console.log('OAUTH POST MISSING redirect_uri, query:', req.query, 'body:', req.body);
+      return res.status(400).send('Missing redirect_uri - Please link from Google Home app, not direct browser');
+    }
+    const email = (req.body.email||'').toLowerCase().trim();
+    const password = req.body.password;
+    let user = await User.findOne({email, password}) || await User.findOne({email:req.body.email, password});
+    if(!user){
+      console.log('OAUTH INVALID', email);
+      return res.send(`Invalid credentials for ${email}<br><a href="javascript:history.back()">Back</a>`);
+    }
     const code = crypto.randomBytes(16).toString('hex');
+    await Code.deleteMany({userId:user.id}); // clear old codes
     await Code.create({code, userId:user.id, exp:Date.now()+600000});
+    console.log('OAUTH CODE created', code, 'for', user.id);
     let finalUrl;
     if(redirect_uri.includes('?')) finalUrl = `${redirect_uri}&code=${code}&state=${state}`;
     else finalUrl = `${redirect_uri}?code=${code}&state=${state}`;
-    console.log('OAUTH OK for', user.id, '->', finalUrl.substring(0,100));
+    console.log('OAUTH REDIRECT OK for', user.id, '->', finalUrl.substring(0,200));
     res.redirect(finalUrl);
-  }catch(e){ console.log('OAUTH ERR', e); res.send('Error:'+e.message); }
+  }catch(e){ console.log('OAUTH ERR', e.message, e.stack); res.send('Error:'+e.message); }
 });
 
 app.post('/oauth/token', async (req,res)=>{
@@ -92,7 +104,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // --- TEST ENDPOINTS (GUARANTEED) ---
-app.get('/test/version', (req,res)=> res.json({version:'V60_FAN_FIX', ok:true, time:new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V61_GOOGLE_LINK_FIX', ok:true, time:new Date().toISOString()}));
 app.get('/test/google-sync/:userId', async (req,res)=>{
   try{
     const devs = await Device.find({userId:req.params.userId});
@@ -104,14 +116,14 @@ app.get('/test/offline/clear', async (req,res)=>{
     await OfflineState.deleteMany({});
     await Device.updateMany({}, {$set:{offline:false}});
     offlineDevices.clear();
-    res.json({success:true, cleared:true, version:'V60'});
+    res.json({success:true, cleared:true, version:'V61'});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 app.get('/test/offline', async (req,res)=>{
   try{
     const db = await OfflineState.find({offline:true});
     const devs = await Device.find({offline:true});
-    res.json({offlineDevices:db.map(d=>d.deviceId), offlineDeviceDocs:devs.map(d=>d.id), memory:Array.from(offlineDevices), version:'V60'});
+    res.json({offlineDevices:db.map(d=>d.deviceId), offlineDeviceDocs:devs.map(d=>d.id), memory:Array.from(offlineDevices), version:'V61'});
   }catch(e){ res.json({offlineDevices:Array.from(offlineDevices)}); }
 });
 
@@ -223,7 +235,7 @@ async function googleHandler(req,res){
             const p = ex.params;
             if(ex.command==='action.devices.commands.OnOff'){ d.state=p.on?'ON':'OFF'; ns.on=p.on; }
             if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:b}; d.color.brightness=b; d.state='ON'; ns.brightness=b; ns.on=true; }
-            // V60: Color change does NOT touch brightness - separate
+            // V61: Color change does NOT touch brightness - separate
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               console.log('GOOGLE SetFanSpeed', p);
               if(p.fanSpeed){
@@ -328,7 +340,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
       console.log('ALEXA SetColor', col);
       let dev=await Device.findOne({id:eid, userId});
       if(dev){
-        // V60: Alexa color does NOT change brightness
+        // V61: Alexa color does NOT change brightness
         if(!dev.color) dev.color={hue:45, saturation:1, brightness:dev.brightness||100};
         dev.color.hue=Math.round(col.hue)%360;
         let s=parseFloat(col.saturation); if(s>1) s=s/100; dev.color.saturation=Math.max(0,Math.min(1,s));
@@ -344,8 +356,8 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.log('ALEXA ERR', e.message); res.status(500).json({error:e.message}); }
 });
 
-app.get('/privacy', (req,res)=> res.send('Privacy Policy - Thavayil SmartHome V60'));
-app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V60_FAN_FIX LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
+app.get('/privacy', (req,res)=> res.send('Privacy Policy - Thavayil SmartHome V61'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V61_GOOGLE_LINK_FIX LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil SmartHome V60_FAN_FIX Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil SmartHome V61_GOOGLE_LINK_FIX Port ${PORT}`));
