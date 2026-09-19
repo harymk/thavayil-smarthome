@@ -543,13 +543,13 @@ app.get('/test/fix-color', async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.post('/test/google-query', async (req,res)=>{
+app.get('/test/google-query', async (req,res)=>{
   try{
-    const userId = req.body.userId || '1789741458155';
-    const deviceId = req.body.deviceId || '1875336409';
+    const userId = req.query.userId || '1789741458155';
+    const deviceId = req.query.deviceId || '1875336409';
     const userDevices = await Device.find({userId});
     const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+    if(!d) return res.status(404).json({error:'device not found'});
     let h=0,s=0,v=1;
     if(d.color){
       if(d.color.hue!==undefined) h=d.color.hue;
@@ -557,9 +557,27 @@ app.post('/test/google-query', async (req,res)=>{
       if(d.color.brightness!==undefined) v=d.color.brightness/100;
     }
     const bri = d.brightness||100;
-    state.brightness = bri;
-    state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
-    // Log raw db color
+    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('RAW DB COLOR:', JSON.stringify(d.color));
+    console.log('RETURNING STATE:', JSON.stringify(state));
+    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER, note: 'This is exactly what Google QUERY returns - should have ONLY spectrumHsv'});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/test/google-query', async (req,res)=>{
+  try{
+    const userId = req.body.userId || req.query.userId || '1789741458155';
+    const deviceId = req.body.deviceId || req.query.deviceId || '1875336409';
+    const userDevices = await Device.find({userId});
+    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
+    if(!d) return res.status(404).json({error:'device not found'});
+    let h=0,s=0,v=1;
+    if(d.color){
+      if(d.color.hue!==undefined) h=d.color.hue;
+      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+      if(d.color.brightness!==undefined) v=d.color.brightness/100;
+    }
+    const bri = d.brightness||100;
+    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
     console.log('RAW DB COLOR:', JSON.stringify(d.color));
     console.log('RETURNING STATE:', JSON.stringify(state));
     res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
@@ -605,13 +623,13 @@ app.get('/test/fix-color', async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.post('/test/google-query', async (req,res)=>{
+app.get('/test/google-query', async (req,res)=>{
   try{
-    const userId = req.body.userId || '1789741458155';
-    const deviceId = req.body.deviceId || '1875336409';
+    const userId = req.query.userId || '1789741458155';
+    const deviceId = req.query.deviceId || '1875336409';
     const userDevices = await Device.find({userId});
     const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+    if(!d) return res.status(404).json({error:'device not found'});
     let h=0,s=0,v=1;
     if(d.color){
       if(d.color.hue!==undefined) h=d.color.hue;
@@ -619,9 +637,27 @@ app.post('/test/google-query', async (req,res)=>{
       if(d.color.brightness!==undefined) v=d.color.brightness/100;
     }
     const bri = d.brightness||100;
-    state.brightness = bri;
-    state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
-    // Log raw db color
+    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('RAW DB COLOR:', JSON.stringify(d.color));
+    console.log('RETURNING STATE:', JSON.stringify(state));
+    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER, note: 'This is exactly what Google QUERY returns - should have ONLY spectrumHsv'});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/test/google-query', async (req,res)=>{
+  try{
+    const userId = req.body.userId || req.query.userId || '1789741458155';
+    const deviceId = req.body.deviceId || req.query.deviceId || '1875336409';
+    const userDevices = await Device.find({userId});
+    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
+    if(!d) return res.status(404).json({error:'device not found'});
+    let h=0,s=0,v=1;
+    if(d.color){
+      if(d.color.hue!==undefined) h=d.color.hue;
+      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+      if(d.color.brightness!==undefined) v=d.color.brightness/100;
+    }
+    const bri = d.brightness||100;
+    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
     console.log('RAW DB COLOR:', JSON.stringify(d.color));
     console.log('RETURNING STATE:', JSON.stringify(state));
     res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
@@ -669,13 +705,13 @@ app.get('/test/fix-color', async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.post('/test/google-query', async (req,res)=>{
+app.get('/test/google-query', async (req,res)=>{
   try{
-    const userId = req.body.userId || '1789741458155';
-    const deviceId = req.body.deviceId || '1875336409';
+    const userId = req.query.userId || '1789741458155';
+    const deviceId = req.query.deviceId || '1875336409';
     const userDevices = await Device.find({userId});
     const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+    if(!d) return res.status(404).json({error:'device not found'});
     let h=0,s=0,v=1;
     if(d.color){
       if(d.color.hue!==undefined) h=d.color.hue;
@@ -683,9 +719,27 @@ app.post('/test/google-query', async (req,res)=>{
       if(d.color.brightness!==undefined) v=d.color.brightness/100;
     }
     const bri = d.brightness||100;
-    state.brightness = bri;
-    state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
-    // Log raw db color
+    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('RAW DB COLOR:', JSON.stringify(d.color));
+    console.log('RETURNING STATE:', JSON.stringify(state));
+    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER, note: 'This is exactly what Google QUERY returns - should have ONLY spectrumHsv'});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/test/google-query', async (req,res)=>{
+  try{
+    const userId = req.body.userId || req.query.userId || '1789741458155';
+    const deviceId = req.body.deviceId || req.query.deviceId || '1875336409';
+    const userDevices = await Device.find({userId});
+    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
+    if(!d) return res.status(404).json({error:'device not found'});
+    let h=0,s=0,v=1;
+    if(d.color){
+      if(d.color.hue!==undefined) h=d.color.hue;
+      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+      if(d.color.brightness!==undefined) v=d.color.brightness/100;
+    }
+    const bri = d.brightness||100;
+    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
     console.log('RAW DB COLOR:', JSON.stringify(d.color));
     console.log('RETURNING STATE:', JSON.stringify(state));
     res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
