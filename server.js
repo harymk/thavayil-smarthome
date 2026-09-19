@@ -88,12 +88,24 @@ async function sendAlexaChangeReport(userId, dev){
   }catch(e){}
 }
 
+
 async function sendGoogleReportState(userId, dev){
   try{
     if(!lastReportedState[userId]) lastReportedState[userId] = {};
-    let forcedOnline = (dev._forceOnline!==undefined) ? dev._forceOnline : true;
-    try{ const off = await OfflineState.findOne({deviceId: dev.id || dev.deviceId}); if(off && off.offline) forcedOnline = false; if(dev._forceOnline!==undefined) forcedOnline = dev._forceOnline; }catch(e){}
-    let state = { online: forcedOnline, on: dev.state==='ON' };
+    // V17: If _forceOnline is set, use it directly - this is the relay logic you want
+    let isOnline;
+    if(dev._forceOnline !== undefined){
+      isOnline = dev._forceOnline;
+      console.log(`V17 FORCE RELAY device ${dev.id} -> online:${isOnline} (if online true, if offline false)`);
+    } else {
+      // Fallback: check OfflineState collection
+      try{
+        const off = await OfflineState.findOne({deviceId: dev.id});
+        isOnline = !(off && off.offline);
+      }catch(e){ isOnline = true; }
+      console.log(`V17 AUTO RELAY device ${dev.id} -> online:${isOnline}`);
+    }
+    let state = { online: isOnline, on: dev.state==='ON' };
     if(dev.type==='FAN'){
       const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
       state.currentFanSpeedSetting = map[dev.speed] || 'medium';
@@ -106,7 +118,10 @@ async function sendGoogleReportState(userId, dev){
     console.log(`ReportState (local) ${dev.id} ->`, JSON.stringify(state));
 
     const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
-    if(!saJson) return;
+    if(!saJson){
+      console.log('V17 NO GOOGLE_SERVICE_ACCOUNT env var - cannot send to Google!');
+      return;
+    }
     try{
       const { JWT } = require('google-auth-library');
       const sa = JSON.parse(saJson);
@@ -114,12 +129,34 @@ async function sendGoogleReportState(userId, dev){
       const tokens = await client.authorize();
       const https = require('https');
       const body = JSON.stringify({ requestId: 'thavayil-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [dev.id]: state } } } });
-      const req = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, res=>{ res.on('data',()=>{}); res.on('end',()=>console.log(`HomeGraph Report ${dev.id} ${res.statusCode}`)); });
+      const req = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, res=>{ 
+        let data=''; res.on('data', d=>data+=d); res.on('end',()=>console.log(`HomeGraph Report ${dev.id} online:${isOnline} ${res.statusCode} ${data.slice(0,200)}`));
+      });
       req.on('error', e=>console.log('HomeGraph error', e.message));
       req.write(body); req.end();
     }catch(e){ console.log('HomeGraph auth error', e.message); }
   }catch(e){ console.log('ReportState error', e.message); }
 }
+
+async function forceReportOnline(deviceId, isOnline){
+  try{
+    const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
+    if(!dev){ console.log('V17 forceReport no dev', deviceId); return; }
+    dev._forceOnline = isOnline;
+    console.log(`V17 FORCE CALL device ${deviceId} online=${isOnline} -> will relay online:${isOnline}`);
+    await sendGoogleReportState(dev.userId, dev);
+  }catch(e){ console.log('V17 forceReport error', e.message); }
+}
+
+app.get('/test/report', async (req,res)=>{
+  try{
+    const id = req.query.id || '6328761164';
+    const online = req.query.online !== 'false';
+    await forceReportOnline(id, online);
+    res.json({success:true, device:id, online:online, message: `Relayed online:${online}`});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
@@ -350,7 +387,8 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                    if(intent==='action.devices.QUERY'){
+                    console.log('V17 QUERY intent user', userId);
+    if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
@@ -468,30 +506,6 @@ server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} 
 
 
 
-
-// V16: Force relay online true/false to Google Home Graph
-async function forceReportOnline(deviceId, isOnline){
-  try{
-    const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
-    if(!dev){ console.log('forceReport no dev', deviceId); return; }
-    console.log('V16 FORCE REPORT', deviceId, 'online=', isOnline);
-    if(typeof sendGoogleReportState === 'function'){
-      dev._forceOnline = isOnline;
-      await sendGoogleReportState(dev.userId, dev);
-    }
-  }catch(e){ console.log('V16 forceReport error', e.message); }
-}
-
-app.get('/test/report', async (req,res)=>{
-  try{
-    const id = req.query.id || '6328761164';
-    const online = req.query.online !== 'false';
-    console.log('V16 MANUAL REPORT', id, 'online', online);
-    await forceReportOnline(id, online);
-    res.json({success:true, device:id, online:online});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
 global.offlineDevices = global.offlineDevices || new Set();
 global.qCount = global.qCount || {};
 
@@ -511,7 +525,7 @@ app.get('/test/offline/clear', async (req,res)=>{
   }catch(e){ console.log('clear error', e.message); }
   global.offlineDevices = new Set();
   global.qCount = {};
-  console.log('V16 CLEARED ALL - reporting online true for all');
+  console.log('V17 CLEARED ALL - relaying online:true for all');
   try{ const all = await Device.find({}); for(const d of all){ await forceReportOnline(d.id, true); } }catch(e){ console.log('clear report err', e.message); }
   res.json({success:true, cleared:true, offlineDevices:[]});
 });
@@ -527,11 +541,11 @@ app.get('/test/offline/set', async (req,res)=>{
       await OfflineState.findOneAndUpdate({deviceId:id}, {deviceId:id, offline:isOffline, updatedAt:new Date()}, {upsert:true, new:true});
       const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
       if(dev){ dev.offline = isOffline; await dev.save(); }
-      console.log('V16 SET', id, 'offline=', isOffline);
-    }catch(e){ console.log('V16 set error', e.message); }
+      console.log(`V17 SET ${id} offline=${isOffline} -> relay online:${!isOffline}`);
+    }catch(e){ console.log('V17 set error', e.message); }
     global.qCount[id]=0;
     await forceReportOnline(id, !isOffline);
-    res.json({success:true, device:id, online:isOnline, offline:isOffline});
+    res.json({success:true, device:id, online:isOnline, offline:isOffline, relay:`online:${!isOffline}`});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 app.post('/test/offline', async (req,res)=>{
@@ -546,10 +560,10 @@ app.post('/test/offline', async (req,res)=>{
       await OfflineState.findOneAndUpdate({deviceId:deviceId}, {deviceId:deviceId, offline:isOffline, updatedAt:new Date()}, {upsert:true, new:true});
       const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
       if(dev){ dev.offline = isOffline; await dev.save(); if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev); }
-      console.log('V16 POST', deviceId, 'offline=', isOffline);
-    }catch(e){ console.log('V16 post error', e.message); }
+      console.log(`V17 POST ${deviceId} offline=${isOffline} -> relay online:${!isOffline}`);
+    }catch(e){ console.log('V17 post error', e.message); }
     await forceReportOnline(deviceId, !isOffline);
-    res.json({success:true, device:deviceId, online:isOnline, offline:isOffline});
+    res.json({success:true, device:deviceId, online:isOnline, offline:isOffline, relay:`online:${!isOffline}`});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
@@ -583,7 +597,8 @@ app.post('/google', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                    if(intent==='action.devices.QUERY'){
+                    console.log('V17 QUERY intent user', userId);
+    if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
