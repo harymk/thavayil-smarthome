@@ -291,7 +291,7 @@ app.post('/api/device/control', authMiddleware, async (req,res)=>{
     if(dev){
       if(action==='TurnOn') dev.state='ON';
       if(action==='TurnOff') dev.state='OFF';
-      if(color&&dev.type==='LIGHT'){ dev.color=color; dev.brightness=color.brightness||dev.brightness; }
+      if(color&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.hue=color.hue!==undefined?color.hue:dev.color.hue; dev.color.saturation=color.saturation!==undefined?color.saturation:dev.color.saturation; if(color.brightness!==undefined && color.hue===undefined){ dev.color.brightness=color.brightness; dev.brightness=color.brightness; } dev.state='ON'; }
       if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); dev.state='ON'; }
       if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
       await dev.save(); await emitDevice(req.user.userId, dev);
@@ -666,7 +666,7 @@ app.post('/smarthome', (req,res)=>{
 });
 
 
-app.get('/test/version', (req,res)=> res.json({version:'V42_COLOR_VALUE_MATCHES_BRIGHTNESS', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V43_WEB_DASHBOARD_COLOR_FIX', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id||'1875336409';
