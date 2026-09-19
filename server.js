@@ -165,11 +165,21 @@ function authMiddleware(req,res,next){
 app.get('/api/devices', authMiddleware, async (req,res)=>{
   try{ const devs=await Device.find({userId:req.user.userId}); res.json(devs); }catch(e){ res.status(500).json({error:e.message}); }
 });
+function gen10DigitId(){ return Math.floor(1000000000 + Math.random()*9000000000).toString(); }
+
 app.post('/api/devices', authMiddleware, async (req,res)=>{
   try{
     const {name,type,id,color,brightness,speed}=req.body;
     if(!name||!type) return res.status(400).json({error:'name type required'});
-    const deviceId=id||type.toLowerCase()+'_'+Date.now().toString().slice(-4);
+    // FIX: Force 10-digit random ID
+    let deviceId = id;
+    if(!deviceId || !/^\d{10}$/.test(deviceId)){
+      deviceId = gen10DigitId();
+    }
+    // Ensure unique
+    let exists = await Device.findOne({id: deviceId, userId: req.user.userId});
+    while(exists){ deviceId = gen10DigitId(); exists = await Device.findOne({id: deviceId, userId: req.user.userId}); }
+
     const upper=type.toUpperCase(); let cat=upper==='LIGHT'?'LIGHT':upper==='FAN'?'FAN':'SWITCH';
     let dev={id:deviceId,deviceId,userId:req.user.userId,name,type:upper,displayCategory:cat,state:'OFF',createdAt:new Date().toISOString()};
     if(upper==='LIGHT'){
@@ -181,6 +191,20 @@ app.post('/api/devices', authMiddleware, async (req,res)=>{
     const created = await Device.create(dev);
     await emitDevice(req.user.userId, created);
     res.json(created);
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// NEW: RENAME DEVICE
+app.patch('/api/devices/:id/rename', authMiddleware, async (req,res)=>{
+  try{
+    const {name}=req.body;
+    if(!name || name.trim().length<2) return res.status(400).json({error:'valid name required'});
+    let dev = await Device.findOne({id:req.params.id, userId:req.user.userId});
+    if(!dev) return res.status(404).json({error:'device not found'});
+    dev.name = name.trim();
+    await dev.save();
+    await emitDevice(req.user.userId, dev);
+    res.json({success:true, device:dev});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 app.delete('/api/devices/:id', authMiddleware, async (req,res)=>{
