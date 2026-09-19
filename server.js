@@ -104,7 +104,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // --- TEST ENDPOINTS (GUARANTEED) ---
-app.get('/test/version', (req,res)=> res.json({version:'V61_GOOGLE_LINK_FIX', ok:true, time:new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V63_SEPARATE_BRIGHTNESS', ok:true, time:new Date().toISOString()}));
 app.get('/test/google-sync/:userId', async (req,res)=>{
   try{
     const devs = await Device.find({userId:req.params.userId});
@@ -234,7 +234,7 @@ async function googleHandler(req,res){
           for(const ex of cmd.execution){
             const p = ex.params;
             if(ex.command==='action.devices.commands.OnOff'){ d.state=p.on?'ON':'OFF'; ns.on=p.on; }
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:b}; d.color.brightness=b; d.state='ON'; ns.brightness=b; ns.on=true; }
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:100}; d.state='ON'; ns.brightness=b; ns.on=true; } // V63 SEPARATE
             // V61: Color change does NOT touch brightness - separate
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               console.log('GOOGLE SetFanSpeed', p);
@@ -357,7 +357,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
 });
 
 app.get('/privacy', (req,res)=> res.send('Privacy Policy - Thavayil SmartHome V61'));
-app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V61_GOOGLE_LINK_FIX LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V63_SEPARATE_BRIGHTNESS LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil SmartHome V61_GOOGLE_LINK_FIX Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil SmartHome V63_SEPARATE_BRIGHTNESS Port ${PORT}`));
