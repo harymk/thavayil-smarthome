@@ -572,24 +572,55 @@ async function handleGoogleSmarthome(req,res){
       return res.json({requestId, payload:{devices:devicesState}});
     }
     if(intent==='action.devices.EXECUTE'){
-      // Simplified execute
       const commands = input.payload.commands;
       const results=[];
       for(let cmd of commands){
         for(let devInfo of cmd.devices){
           const id=devInfo.id;
           const d=await Device.findOne({id:id, userId:userId}) || await Device.findOne({id:id});
-          if(!d) continue;
-          let newState={};
+          if(!d){ console.log('EXECUTE device not found', id); continue; }
+          console.log('EXECUTE for device', id, 'cmds', JSON.stringify(cmd.execution));
+          let newState={online:true};
           for(let ex of cmd.execution){
-            if(ex.command==='action.devices.commands.OnOff'){ d.state=ex.params.on?'ON':'OFF'; newState.on=ex.params.on; }
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ d.brightness=ex.params.brightness; newState.brightness=ex.params.brightness; }
-            if(ex.command==='action.devices.commands.ColorAbsolute' && ex.params.color?.spectrumHSV){ const hsv=ex.params.color.spectrumHSV; d.color={hue:Math.round(hsv.hue), saturation:hsv.saturation, brightness:Math.round(hsv.value*100)}; newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}}; }
+            if(ex.command==='action.devices.commands.OnOff'){
+              d.state=ex.params.on?'ON':'OFF';
+              newState.on=ex.params.on;
+            }
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){
+              d.brightness=ex.params.brightness;
+              d.state='ON';
+              newState.brightness=ex.params.brightness;
+              newState.on=true;
+            }
+            if(ex.command==='action.devices.commands.ColorAbsolute'){
+              if(ex.params.color?.spectrumHSV){
+                const hsv=ex.params.color.spectrumHSV;
+                d.color={hue:Math.round(hsv.hue), saturation:hsv.saturation, brightness:Math.round(hsv.value*100)};
+                d.brightness=d.color.brightness;
+                d.state='ON';
+                newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}};
+                newState.on=true;
+                newState.brightness=d.brightness;
+              }
+            }
+            if(ex.command==='action.devices.commands.SetFanSpeed'){
+              d.speed=ex.params.fanSpeed;
+              d.state='ON';
+              newState.currentFanSpeedSetting=d.speed;
+              newState.on=true;
+            }
           }
           await d.save();
+          console.log('EXECUTE saved device', id, 'state', d.state, 'newState', JSON.stringify(newState));
+          // Send ReportState to HomeGraph for real-time update
+          try{
+            await sendGoogleReportState(userId, d);
+            console.log('ReportState sent for', id);
+          }catch(e){ console.log('ReportState failed', e.message); }
           results.push({ids:[id], status:'SUCCESS', states:newState});
         }
       }
+      console.log('EXECUTE RETURNING', JSON.stringify(results).slice(0,1000));
       return res.json({requestId, payload:{commands:results}});
     }
   }catch(e){ console.log('SMARTHOME ERROR', e.message, e.stack); res.status(500).json({error:e.message}); }
@@ -598,7 +629,7 @@ app.post('/smarthome', handleGoogleSmarthome);
 app.post('/fulfillment', handleGoogleSmarthome);
 app.post('/google-home', handleGoogleSmarthome);
 
-const SERVER_VER='V34_ALIAS_OAUTH_RGB';
+const SERVER_VER='V35_EXECUTE_FIX';
 console.log('*** VERSION', SERVER_VER, '***');
 app.get('/test/version',(req,res)=> res.json({version:SERVER_VER, paths:['/smarthome','/google/smarthome','/fulfillment']}));
 
