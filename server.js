@@ -227,9 +227,22 @@ app.post('/oauth/authorize', async (req,res)=>{
 });
 app.post('/oauth/token', async (req,res)=>{
   try{
+    console.log('OAUTH TOKEN REQ:', req.body.grant_type, 'code?', !!req.body.code, 'refresh?', !!req.body.refresh_token);
+    // Handle refresh_token grant
+    if(req.body.grant_type==='refresh_token' && req.body.refresh_token){
+      try{
+        const decoded = require('jsonwebtoken').verify(req.body.refresh_token, JWT_SECRET_NEW);
+        const token=jwt.sign({userId:decoded.userId}, JWT_SECRET_NEW, {noTimestamp:true});
+        console.log('OAUTH TOKEN REFRESH OK for', decoded.userId);
+        return res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
+      }catch(e){
+        console.log('refresh token invalid, trying as code', e.message);
+      }
+    }
     const entry=await Code.findOne({code:req.body.code});
     if(!entry) return res.status(400).json({error:'invalid code'});
     const token=jwt.sign({userId:entry.userId}, JWT_SECRET_NEW, {noTimestamp:true});
+    console.log('OAUTH TOKEN OK for', entry.userId);
     res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
