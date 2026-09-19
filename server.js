@@ -340,22 +340,32 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-    if(intent==='action.devices.QUERY'){
+        if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        if(!d){ devicesState[q.id]={online:false}; continue; }
-        let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+        let isOffline = global.offlineDevices.has(q.id);
+        let online = !isOffline;
+        if(!d){
+          devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
+          continue;
+        }
+        let state = {online:online, on: d.state==='ON', status:'SUCCESS'};
         if(d.type==='FAN'){
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-        if(d.type==='LIGHT' && d.brightness!==undefined) state.brightness = d.brightness;
-        if(d.type==='LIGHT' && d.color){ state.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.color.brightness||100)/100}}; }
+        if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 80;
+          const col = d.color || {hue:45, saturation:1, brightness: bri};
+          state.brightness = bri;
+          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+        }
         devicesState[q.id]=state;
       }
+      console.log('QUERY V9 MANUAL ONLY', JSON.stringify({offline:Array.from(global.offlineDevices), result:devicesState}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
@@ -504,27 +514,14 @@ app.post('/google', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-    if(intent==='action.devices.QUERY'){
+        if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        let isManualOffline = global.offlineDevices.has(q.id);
-        let online = true;
-        if(payloadDevices.length===1){
-          if(!global.qCount[q.id]) global.qCount[q.id]=0;
-          if(isManualOffline){
-            online=false;
-          } else {
-            global.qCount[q.id]++;
-            if(global.qCount[q.id]===1) online=true;
-            else if(global.qCount[q.id]===2) online=false;
-            else { online=true; global.qCount[q.id]=0; }
-          }
-        } else {
-          online = !isManualOffline;
-        }
+        let isOffline = global.offlineDevices.has(q.id);
+        let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
           continue;
@@ -542,7 +539,7 @@ app.post('/google', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V8', JSON.stringify({qCount:global.qCount, offline:Array.from(global.offlineDevices)}));
+      console.log('QUERY V9 MANUAL ONLY', JSON.stringify({offline:Array.from(global.offlineDevices), result:devicesState}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
