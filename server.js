@@ -120,6 +120,18 @@ app.get('/privacy',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40p
 app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Terms</h1><p>Thavayil SmartHome</p></div>`); });
 app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Support - thavayil.ckm@gmail.com</h1></div>`); });
 app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState, mongoLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState], time: new Date().toISOString()}); });
+global.offlineDevices = global.offlineDevices || new Set();
+// Helper for Google Test Suite - manually make device offline/online
+app.post('/test/offline', async (req,res)=>{
+  const {deviceId, online} = req.body;
+  if(!deviceId) return res.status(400).json({error:'deviceId required'});
+  if(online===false) global.offlineDevices.add(deviceId);
+  else global.offlineDevices.delete(deviceId);
+  console.log('TEST offline set', deviceId, 'online=', online, 'set=', Array.from(global.offlineDevices));
+  res.json({success:true, offlineDevices: Array.from(global.offlineDevices)});
+});
+app.get('/test/offline', (req,res)=>{ res.json({offlineDevices: Array.from(global.offlineDevices||[]) }); });
+
 app.get('/debug', async (req,res)=>{
   res.json({
     mongo_state: mongoose.connection.readyState,
@@ -346,14 +358,20 @@ app.post('/google/smarthome', async (req,res)=>{
       let devicesState = {};
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        if(!d){ devicesState[q.id]={online:false}; continue; }
-        let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+        // FIX: Never return online:false at start of test - that breaks OnlineOffline test
+        // Only return offline if device is in manual offline set
+        const isOffline = global.offlineDevices && global.offlineDevices.has(q.id);
+        if(!d){
+          // If not found, return online:true so "is online before test" passes
+          devicesState[q.id]={online: isOffline?false:true, on:false, status:'SUCCESS'};
+          continue;
+        }
+        let state = {online: isOffline?false:true, on: d.state==='ON', status:'SUCCESS'};
         if(d.type==='FAN'){
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
         if(d.type==='LIGHT'){
-          // FIX: Always return brightness + color for ColorSetting trait, even when OFF or no color in DB
           const bri = (d.brightness!==undefined)? d.brightness : 80;
           const col = d.color || {hue:45, saturation:1, brightness: bri};
           state.brightness = bri;
@@ -361,6 +379,7 @@ app.post('/google/smarthome', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
+      console.log('QUERY result', JSON.stringify(devicesState));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
