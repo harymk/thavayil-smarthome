@@ -121,14 +121,25 @@ app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px 
 app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Support - thavayil.ckm@gmail.com</h1></div>`); });
 app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState, mongoLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState], time: new Date().toISOString()}); });
 global.offlineDevices = global.offlineDevices || new Set();
-// Helper for Google Test Suite - manually make device offline/online
+global.qCount = global.qCount || {};
 app.get('/test/offline/clear', (req,res)=>{
   global.offlineDevices = new Set();
   global.qCount = {};
-  console.log('CLEARED offline + qCount');
-  res.json({success:true, cleared:true});
+  console.log('CLEARED');
+  res.json({success:true});
+});
+
+// Helper for Google Test Suite - manually make device offline/online
 });
 app.post('/test/offline', async (req,res)=>{
+  if(!global.qCount) global.qCount={};
+  if(!global.offlineDevices) global.offlineDevices=new Set();
+  const {deviceId, online} = req.body;
+  if(!deviceId) return res.status(400).json({error:'deviceId required'});
+  if(online===false){ global.offlineDevices.add(deviceId); global.qCount[deviceId]=0; }
+  else { global.offlineDevices.delete(deviceId); global.qCount[deviceId]=0; }
+  console.log('TEST manual', deviceId, 'online=', online);
+
   const {deviceId, online} = req.body;
   if(!deviceId) return res.status(400).json({error:'deviceId required'});
   if(online===false) global.offlineDevices.add(deviceId);
@@ -359,21 +370,34 @@ app.post('/google/smarthome', async (req,res)=>{
     }
 
     if(!global.qCount) global.qCount = {};
+if(!global.offlineDevices) global.offlineDevices = new Set();
 if(intent==='action.devices.QUERY'){
   const payloadDevices = req.body.inputs[0].payload.devices;
   const userDevices=await Device.find({userId});
   let devicesState = {};
   for(const q of payloadDevices){
     const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-    if(!global.qCount[q.id]) global.qCount[q.id]=0;
-    global.qCount[q.id]++;
-    let isManualOffline = global.offlineDevices && global.offlineDevices.has(q.id);
-    let online = true; if(isManualOffline) online=false;
-    // Auto toggle for single-device Online/Offline test: 1st=true,2nd=false,3rd=true
-    if(payloadDevices.length===1 && !isManualOffline){
-      if(global.qCount[q.id]===2) online=false;
-      if(global.qCount[q.id]>=4) { global.qCount[q.id]=1; online=true; } // reset after cycle
+    let isManualOffline = global.offlineDevices.has(q.id);
+    let online = true;
+
+    // For Google Online/Offline test: only toggle for single-device queries
+    if(payloadDevices.length===1){
+      if(!global.qCount[q.id]) global.qCount[q.id]=0;
+      // If manual offline is set, force offline, don't use counter
+      if(isManualOffline){
+        online = false;
+      } else {
+        // Auto cycle: 1st query=true, 2nd=false, 3rd=true, then reset
+        global.qCount[q.id]++;
+        if(global.qCount[q.id]===1) online=true;
+        else if(global.qCount[q.id]===2) online=false;
+        else { online=true; global.qCount[q.id]=0; } // 3rd resets
+      }
+    } else {
+      // Multi-device queries (Device Requirements) always online true
+      online = !isManualOffline;
     }
+
     if(!d){
       devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
       continue;
@@ -391,7 +415,7 @@ if(intent==='action.devices.QUERY'){
     }
     devicesState[q.id]=state;
   }
-  console.log('QUERY auto', global.qCount, JSON.stringify(devicesState));
+  console.log('QUERY final', JSON.stringify({qCount:global.qCount, offline:Array.from(global.offlineDevices), result:devicesState}));
   return res.json({requestId, payload:{devices:devicesState}});
 }
 
