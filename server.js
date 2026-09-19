@@ -23,7 +23,7 @@ mongoose.connection.on('disconnected', ()=> console.log("Mongo Disconnected!"));
 const UserSchema = new mongoose.Schema({ id: String, email: {type:String, unique:true, lowercase:true, trim:true}, password: String });
 const CodeSchema = new mongoose.Schema({ code: String, userId: String, exp: Number });
 const DeviceSchema = new mongoose.Schema({
-  id: String, // removed unique:true - will enforce per user manually
+  id: String,
   deviceId: String,
   userId: String,
   name: String,
@@ -47,8 +47,10 @@ function verifyToken(t){
 
 let alexaTokens = {};
 let googleTokens = {};
+let lastReportedState = {};
 
 async function getUserDevices(userId){ try{ return await Device.find({ userId }); }catch(e){ return []; } }
+
 async function emitDevice(userId, dev){
   try{
     const userDevices = await getUserDevices(userId);
@@ -59,6 +61,7 @@ async function emitDevice(userId, dev){
     sendGoogleReportState(userId, dev);
   }catch(e){ console.log(e.message); }
 }
+
 async function sendAlexaChangeReport(userId, dev){
   try{
     const token = alexaTokens[userId]; if(!token) return;
@@ -76,7 +79,37 @@ async function sendAlexaChangeReport(userId, dev){
     });
   }catch(e){}
 }
-async function sendGoogleReportState(userId, dev){ try{ const token = googleTokens[userId]; if(!token) return; console.log(`Google device updated ${dev.id} state ${dev.state}`); }catch(e){} }
+
+async function sendGoogleReportState(userId, dev){
+  try{
+    if(!lastReportedState[userId]) lastReportedState[userId] = {};
+    let state = { online: true, on: dev.state==='ON' };
+    if(dev.type==='FAN'){
+      const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
+      state.currentFanSpeedSetting = map[dev.speed] || 'medium';
+    }
+    if(dev.type==='LIGHT'){
+      if(dev.brightness!==undefined) state.brightness = dev.brightness;
+      if(dev.color) state.color = { spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:(dev.color.brightness||100)/100 }};
+    }
+    lastReportedState[userId][dev.id] = {...state, ts: Date.now() };
+    console.log(`ReportState (local) ${dev.id} ->`, JSON.stringify(state));
+
+    const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
+    if(!saJson) return;
+    try{
+      const { JWT } = require('google-auth-library');
+      const sa = JSON.parse(saJson);
+      const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
+      const tokens = await client.authorize();
+      const https = require('https');
+      const body = JSON.stringify({ requestId: 'thavayil-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [dev.id]: state } } } });
+      const req = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, res=>{ res.on('data',()=>{}); res.on('end',()=>console.log(`HomeGraph Report ${dev.id} ${res.statusCode}`)); });
+      req.on('error', e=>console.log('HomeGraph error', e.message));
+      req.write(body); req.end();
+    }catch(e){ console.log('HomeGraph auth error', e.message); }
+  }catch(e){ console.log('ReportState error', e.message); }
+}
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
@@ -87,61 +120,41 @@ app.get('/privacy',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40p
 app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Terms</h1><p>Thavayil SmartHome</p></div>`); });
 app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Support - thavayil.ckm@gmail.com</h1></div>`); });
 app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState, mongoLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState], time: new Date().toISOString()}); });
-
-// AUTH - FIXED
-// TEMP DEBUG - Add this route
 app.get('/debug', async (req,res)=>{
   res.json({
     mongo_state: mongoose.connection.readyState,
-    mongo_states: {0:'disconnected',1:'connected',2:'connecting',3:'disconnecting'},
     MONGO_URL_exists: !!MONGO_URL,
     user_count: await User.countDocuments().catch(e=>e.message),
-    env: Object.keys(process.env).filter(k=>k.includes('MONGO'))
   });
 });
 
 app.post('/auth/register', async (req,res)=>{
   try{
-    console.log("REGISTER BODY:", req.body);
     const email = (req.body.email||'').toLowerCase().trim();
     const password = (req.body.password||'').trim();
     if(!email||!password) return res.status(400).json({error:'email and password required'});
-    
     const existing = await User.findOne({email});
     if(existing) return res.status(400).json({error:'user exists, please login'});
-
     const user={id:Date.now().toString(), email, password};
     const created = await User.create(user);
-    console.log("CREATED USER:", created.email);
     const token=jwt.sign({userId:created.id,email}, JWT_SECRET_NEW, {noTimestamp:true});
     res.json({token,userId:created.id});
-  }catch(e){ 
-    console.error("REGISTER ERROR FULL:", e);
-    res.status(500).json({error: e.message, stack: e.stack}); 
-  }
+  }catch(e){ console.error("REGISTER ERROR", e); res.status(500).json({error: e.message}); }
 });
 
 app.post('/auth/login', async (req,res)=>{
   try{
-    console.log("LOGIN BODY:", req.body);
     const email = (req.body.email||'').toLowerCase().trim();
     const password = (req.body.password||'').trim();
     if(!email||!password) return res.status(400).json({error:'email and password required'});
-
     const user = await User.findOne({email});
-    console.log("FOUND USER?", !!user);
     if(!user) return res.status(401).json({error:'user not found - register first. Checked email: '+email});
     if(user.password !== password) return res.status(401).json({error:'wrong password'});
-
     const token=jwt.sign({userId:user.id,email:user.email}, JWT_SECRET_NEW, {noTimestamp:true});
-    console.log("LOGIN OK:", email);
     res.json({token,userId:user.id});
-  }catch(e){ 
-    console.error("LOGIN ERROR FULL:", e);
-    res.status(500).json({error: e.message}); 
-  }
+  }catch(e){ console.error("LOGIN ERROR", e); res.status(500).json({error: e.message}); }
 });
-// OAUTH
+
 app.get('/oauth/authorize',(req,res)=>{
   const {redirect_uri,state,client_id}=req.query;
   res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link your account to ${client_id?.includes('google')?'Google Home':'Alexa'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button type="submit">Link Account</button></form></div></body></html>`);
@@ -173,7 +186,6 @@ function authMiddleware(req,res,next){
   }catch(e){ res.status(401).json({error:'unauth - login again'}); }
 }
 
-// DEVICE APIS
 app.get('/api/devices', authMiddleware, async (req,res)=>{
   try{ const devs=await Device.find({userId:req.user.userId}); res.json(devs); }catch(e){ res.status(500).json({error:e.message}); }
 });
@@ -227,7 +239,6 @@ app.post('/api/device/control', authMiddleware, async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// ALEXA & GOOGLE - keep your same code...
 app.post('/alexa/smarthome', async (req,res)=>{
   try{
     const auth=req.headers.authorization; if(!auth) return res.status(401).json({error:'no auth'});
@@ -278,28 +289,57 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.error('ALEXA ERROR',e); res.status(500).json({error:e.message}); }
 });
 
-function googleDeviceTraits(d){ let traits = ['action.devices.traits.OnOff']; if(d.type==='LIGHT'){ traits.push('action.devices.traits.Brightness','action.devices.traits.ColorSetting'); } if(d.type==='FAN'){ traits.push('action.devices.traits.FanSpeed','action.devices.traits.OnOff'); } return traits; }
-function googleDeviceType(d){ if(d.type==='LIGHT') return 'action.devices.types.LIGHT'; if(d.type==='FAN') return 'action.devices.types.FAN'; return 'action.devices.types.SWITCH'; }
+function googleDeviceTraits(d){
+  if(d.type==='FAN') return ['action.devices.traits.OnOff','action.devices.traits.FanSpeed'];
+  if(d.type==='LIGHT') return ['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting'];
+  return ['action.devices.traits.OnOff'];
+}
+function googleDeviceType(d){
+  if(d.type==='LIGHT') return 'action.devices.types.LIGHT';
+  if(d.type==='FAN') return 'action.devices.types.FAN';
+  return 'action.devices.types.SWITCH';
+}
+
 app.post('/google/smarthome', async (req,res)=>{
   try{
     const auth=req.headers.authorization; if(!auth) return res.status(401).json({error:'no auth'});
     const token=auth.replace('Bearer ','');
     let decoded; try{ decoded=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid token'}); }
     const userId=decoded.userId;
-    try{ googleTokens[userId]=token; }catch(e){}
+    googleTokens[userId]=token;
     const requestId = req.body.requestId;
     const intent = req.body.inputs?.[0]?.intent;
+    console.log(`GOOGLE ${intent} for user ${userId}`);
+
     if(intent==='action.devices.SYNC'){
       const userDevices=await Device.find({userId});
       const devices=userDevices.map(d=>{
         let traits = googleDeviceTraits(d);
         let attributes = {};
-        if(d.type==='LIGHT'){ attributes.colorModel='hsv'; attributes.colorTemperatureRange={temperatureMinK:2000, temperatureMaxK:9000}; }
-        if(d.type==='FAN'){ attributes.availableFanSpeeds={ speeds:[ {speed_name:'low', speed_values:[{speed_synonym:['low','slow','1','one'], lang:'en'}]}, {speed_name:'medium', speed_values:[{speed_synonym:['medium','mid','2','3','two','three'], lang:'en'}]}, {speed_name:'high', speed_values:[{speed_synonym:['high','fast','max','4','5','four','five'], lang:'en'}]} ], ordered:true }; attributes.reversible=false; }
-        return { id:d.id, type: googleDeviceType(d), traits, name:{defaultNames:[d.deviceId || d.id], name:d.name, nicknames:[d.name]}, willReportState: true, attributes, deviceInfo:{manufacturer:'Thavayil Electronics', model:'Thavayil SmartHome v1', hwVersion:'1.0', swVersion:'1.0'} };
+        if(d.type==='LIGHT'){ attributes.colorModel='hsv'; }
+        if(d.type==='FAN'){
+          attributes.availableFanSpeeds={
+            speeds:[
+              {speed_name:'low', speed_values:[{speed_synonym:['low','1','slow'], lang:'en'}]},
+              {speed_name:'medium', speed_values:[{speed_synonym:['medium','2','3','mid'], lang:'en'}]},
+              {speed_name:'high', speed_values:[{speed_synonym:['high','4','5','max'], lang:'en'}]}
+            ], ordered:true
+          };
+          attributes.reversible=false;
+        }
+        return {
+          id:d.id,
+          type: googleDeviceType(d),
+          traits,
+          name:{defaultNames:[d.id], name:d.name, nicknames:[d.name]},
+          willReportState: false,
+          attributes,
+          deviceInfo:{manufacturer:'Thavayil Electronics', model:'Thavayil SmartHome v1', hwVersion:'1.0', swVersion:'1.0'}
+        };
       });
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
+
     if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
@@ -308,13 +348,17 @@ app.post('/google/smarthome', async (req,res)=>{
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         if(!d){ devicesState[q.id]={online:false}; continue; }
         let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+        if(d.type==='FAN'){
+          const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
+          state.currentFanSpeedSetting = map[d.speed] || 'medium';
+        }
         if(d.type==='LIGHT' && d.brightness!==undefined) state.brightness = d.brightness;
         if(d.type==='LIGHT' && d.color){ state.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.color.brightness||100)/100}}; }
-        if(d.type==='FAN' && d.speed!==undefined){ const map = {1:'low',2:'medium',3:'medium',4:'high',5:'high'}; state.currentFanSpeedSetting = map[d.speed]||'medium'; state.on = d.state==='ON'; }
         devicesState[q.id]=state;
       }
       return res.json({requestId, payload:{devices:devicesState}});
     }
+
     if(intent==='action.devices.EXECUTE'){
       const commands = req.body.inputs[0].payload.commands;
       let results = [];
@@ -326,19 +370,50 @@ app.post('/google/smarthome', async (req,res)=>{
           let newState = {online:true};
           for(const ex of cmd.execution){
             const params = ex.params;
-            switch(ex.command){
-              case 'action.devices.commands.OnOff': dev.state = params.on? 'ON' : 'OFF'; newState.on = params.on; io.to('user_'+userId).emit('alexa_cmd',{deviceId:id, action: params.on?'TurnOn':'TurnOff'}); break;
-              case 'action.devices.commands.BrightnessAbsolute': dev.brightness = params.brightness; if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness = params.brightness; dev.state='ON'; newState.brightness = params.brightness; newState.on = true; io.to('user_'+userId).emit('alexa_cmd',{deviceId:id, action:'SetBrightness', brightness:params.brightness}); break;
-              case 'action.devices.commands.ColorAbsolute': if(params.color && params.color.spectrumHSV){ const hsv = params.color.spectrumHSV; dev.color = {hue: Math.round(hsv.hue), saturation: parseFloat(hsv.saturation), brightness: Math.round((hsv.value||1)*100)}; dev.brightness = dev.color.brightness; dev.state='ON'; newState.color = {spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:hsv.value}}; newState.on = true; io.to('user_'+userId).emit('alexa_cmd',{deviceId:id, action:'SetColor', color:dev.color}); } break;
-              case 'action.devices.commands.SetFanSpeed': let speedNum = {low:1, medium:3, high:5}[params.fanSpeed.toLowerCase()]||3; dev.speed = speedNum; dev.state='ON'; newState.currentFanSpeedSetting = params.fanSpeed.toLowerCase(); newState.on = true; io.to('user_'+userId).emit('alexa_cmd',{deviceId:id, action:'SetSpeed', speed:speedNum}); break;
+            if(ex.command==='action.devices.commands.OnOff'){
+              dev.state = params.on? 'ON' : 'OFF';
+              newState.on = params.on;
+              if(dev.type==='FAN'){
+                if(params.on && !dev.speed) dev.speed = 3;
+                const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
+                newState.currentFanSpeedSetting = map[dev.speed] || 'medium';
+              }
+              if(dev.type==='LIGHT' && dev.brightness!==undefined) newState.brightness = dev.brightness;
+            }
+            if(ex.command==='action.devices.commands.SetFanSpeed'){
+              const mapStr = {low:1, medium:3, high:5};
+              let num = mapStr[params.fanSpeed.toLowerCase()] || 3;
+              dev.speed = num;
+              dev.state = 'ON';
+              newState.on = true;
+              newState.currentFanSpeedSetting = params.fanSpeed.toLowerCase();
+            }
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){
+              dev.brightness = params.brightness;
+              if(!dev.color) dev.color={hue:45,saturation:1,brightness:100};
+              dev.color.brightness = params.brightness;
+              dev.state='ON';
+              newState.on = true;
+              newState.brightness = params.brightness;
+            }
+            if(ex.command==='action.devices.commands.ColorAbsolute' && params.color?.spectrumHSV){
+              const hsv=params.color.spectrumHSV;
+              dev.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:Math.round(hsv.value*100)};
+              dev.brightness=dev.color.brightness;
+              dev.state='ON';
+              newState.on = true;
+              newState.color = {spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:hsv.value}};
             }
           }
-          await dev.save(); await emitDevice(userId, dev);
+          await dev.save();
+          await emitDevice(userId, dev);
+          io.to('user_'+userId).emit('alexa_cmd',{deviceId:id, action: newState.on?'TurnOn':'TurnOff'});
           results.push({ids:[id], status:'SUCCESS', states:newState});
         }
       }
       return res.json({requestId, payload:{commands: results}});
     }
+
     if(intent==='action.devices.DISCONNECT'){ return res.json({requestId, payload:{}}); }
     res.status(400).json({error:'unsupported intent '+intent});
   }catch(e){ console.error('GOOGLE ERROR',e); res.status(500).json({error:e.message}); }
@@ -360,4 +435,4 @@ io.on('connection', async (socket)=>{
 });
 
 const PORT=process.env.PORT||10000;
-server.listen(PORT,()=>console.log(`Thavayil SmartHome - Port ${PORT} - Mongo State: ${mongoose.connection.readyState}`));
+server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
