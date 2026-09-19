@@ -1,467 +1,209 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
-const cors = require('cors');
-const mongoose = require('mongoose');
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thavayil SmartHome</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui;background:#08080c;color:#e4e4e7;min-height:100vh}
+.header{height:60px;background:#0e0e14;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:20}
+.card{background:#14141e;border:1px solid rgba(255,255,255,0.08);border-radius:24px;overflow:hidden}
+.card-inner{background:#12121a;border:1px solid rgba(255,255,255,0.07);border-radius:20px}
+.input{width:100%;height:56px;background:#0d0d13;border:1px solid rgba(255,255,255,0.10);border-radius:12px;color:#fff;padding:0 16px;font-size:15px;outline:none}
+.btn{height:52px;border-radius:12px;border:0;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}.btn-w{background:#fff;color:#000;width:100%}.btn-g{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.10);color:#fff}
+.btn-signout{height:36px;padding:0 16px;border-radius:10px;background:#ef4444;border:0;color:#fff;font-size:13px;cursor:pointer}
+.btn-copy{height:28px;padding:0 10px;border-radius:8px;background:#fff;color:#000;font-size:11px;cursor:pointer;font-weight:600}
+.btn-small{height:28px;padding:0 12px;border-radius:8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.10);color:#fff;font-size:11px;cursor:pointer}
+.toggle{width:64px;height:36px;background:rgba(255,255,255,0.12);border-radius:999px;position:relative;cursor:pointer;border:1px solid rgba(255,255,255,0.14);transition:.2s}.toggle.on{background:#10b981;border-color:#10b981}.toggle-dot{width:30px;height:30px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:.2s}.toggle.on .toggle-dot{transform:translateX(28px)}
+.main{max-width:900px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:24px}
+.mono{font-family:JetBrains Mono,monospace}.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e1e27;border:1px solid rgba(255,255,255,0.1);padding:12px 20px;border-radius:999px;font-size:13px;z-index:100}
+.code-block{background:#0a0a0f;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;overflow:auto;max-height:400px}
+.token-box{background:#000;border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;word-break:break-all;font-size:11px;overflow:auto;max-height:80px}
+.slider{width:100%;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;outline:none;-webkit-appearance:none}
+.slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;background:#fff;border-radius:50%;cursor:pointer}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:200}
+.modal{background:#1a1a26;border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:24px;width:90%;max-width:360px}
+.dev-id-box{display:flex;align-items:center;justify-content:space-between;background:#0a0a0f;border:1px dashed rgba(255,255,255,0.15);border-radius:12px;padding:12px 14px;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="header">
+<div style="display:flex;align-items:center;gap:12px"><div style="width:32px;height:32px;background:#fff;color:#000;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700">T</div><div style="font-size:14px;font-weight:600">Thavayil SmartHome</div></div>
+<div style="display:flex;align-items:center;gap:12px"><span id="liveStatus" style="font-size:10px;padding:4px 8px;border-radius:20px;background:rgba(16,185,129,0.15);color:#10b981">LIVE</span><span id="userEmail" style="font-size:12px;color:#71717a"></span><button id="signoutBtn" class="btn-signout" style="display:none" onclick="signout()">Sign out</button></div>
+</div>
+<div id="authView" style="max-width:420px;margin:80px auto;padding:20px"><div class="card" style="padding:28px"><h2 style="font-size:18px;font-weight:600">Login</h2><input id="email" class="input" placeholder="Email" style="margin:12px 0"><input id="pass" class="input" type="password" placeholder="Password"><button class="btn btn-w" style="margin-top:12px" onclick="login()">Login</button><button class="btn btn-g" style="width:100%;margin-top:8px" onclick="register()">Create Account</button><div id="authMsg" style="font-size:11px;color:#ef4444;margin-top:8px;min-height:16px"></div></div></div>
+<div id="dashView" style="display:none"><div class="main">
+<div class="card"><div style="padding:16px;background:#0d0d13"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:13px;font-weight:600">TOKEN</div><button class="btn-copy" onclick="copyToken()">Copy Token</button></div><div id="tokenBox" class="mono token-box" style="margin-top:10px">Loading...</div></div></div>
+<div class="card"><div style="padding:20px"><div style="font-size:16px;font-weight:600">Add Device</div></div>
+<div style="padding:0 20px 20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div><label style="font-size:10px;color:#71717a">NAME</label><input id="devName" class="input" placeholder="Hall Light" style="margin-top:6px;height:48px"></div>
+<div><label style="font-size:10px;color:#71717a">TYPE</label><select id="devType" class="input" style="margin-top:6px;height:48px" onchange="onTypeChange()"><option value="LIGHT">LIGHT</option><option value="SWITCH">SWITCH</option><option value="FAN">FAN</option></select></div>
+</div>
+<div><label style="font-size:10px;color:#71717a">DEVICE ID - 10 DIGIT - AUTO</label>
+<div class="dev-id-box">
+<div><div class="mono" id="devIdDisplay" style="font-size:18px;letter-spacing:2px;font-weight:700">----------</div><div style="font-size:9px;color:#71717a;margin-top:2px">Use this ID in ESP32 Code</div></div>
+<div style="display:flex;gap:6px"><button class="btn-copy" onclick="copyDevId()">Copy</button><button class="btn-small" onclick="genId()">New</button></div>
+</div></div>
+<div id="lightOpts" style="background:#0d0d13;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div id="colorDots" style="display:flex;gap:6px"></div><input id="colorPicker" type="color" value="#facc15" style="width:36px;height:36px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);cursor:pointer" oninput="setColor(this.value)"><span id="colorText" class="mono" style="font-size:10px;color:#71717a"></span></div>
+<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px">
+<div style="display:flex;justify-content:space-between;font-size:10px;color:#71717a"><span>BRIGHTNESS</span><span id="brightText">80%</span></div>
+<input id="brightSlider" class="slider" type="range" min="5" max="100" value="80" style="margin-top:6px" oninput="setBright(this.value)">
+</div>
+</div>
+<div id="fanOpts" style="display:none;background:#0d0d13;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:14px">
+<div style="display:flex;gap:6px;margin-top:8px"><button onclick="setSpeed(1)" class="btn btn-g" style="flex:1;height:40px" id="s1">1</button><button onclick="setSpeed(2)" class="btn btn-g" style="flex:1;height:40px" id="s2">2</button><button onclick="setSpeed(3)" class="btn btn-g" style="flex:1;height:40px;background:#fff;color:#000" id="s3">3</button><button onclick="setSpeed(4)" class="btn btn-g" style="flex:1;height:40px" id="s4">4</button><button onclick="setSpeed(5)" class="btn btn-g" style="flex:1;height:40px" id="s5">5</button></div>
+</div>
+<button class="btn btn-w" style="height:48px" onclick="addDevice()">+ Add Device</button>
+<div id="addMsg" style="font-size:11px;color:#71717a"></div>
+</div></div>
+<div><div style="display:flex;justify-content:space-between;margin-bottom:12px"><h3 style="font-size:12px;color:#71717a">MY DEVICES - <span id="myDevCount">0</span></h3><button class="btn-small" onclick="loadDevices()">Refresh</button></div><div id="devices" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px"></div></div>
+<div class="card"><div style="padding:16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="font-size:13px;font-weight:600">ESP32 Code</div><button class="btn btn-g" style="height:32px;font-size:11px;padding:0 12px" onclick="copyCode()">Copy Code</button></div><div style="padding:16px"><pre id="codeBlock" class="mono code-block" style="font-size:10px"></pre></div></div>
+</div></div>
+<div id="toast" class="toast" style="display:none"><span id="toastMsg"></span></div>
+<div id="deleteModal" style="display:none" class="modal-bg"><div class="modal"><div style="font-size:16px;font-weight:600">Delete Device?</div><div id="deleteModalName" style="font-size:13px;color:#a1a1aa;margin-top:8px"></div><div style="font-size:11px;color:#71717a;margin-top:6px">ID <span id="deleteModalId" class="mono"></span> will be removed.</div><div style="display:flex;gap:10px;margin-top:20px"><button class="btn btn-g" style="flex:1;height:44px" onclick="closeDeleteModal()">Cancel</button><button class="btn" style="flex:1;height:44px;background:#ef4444;color:#fff" onclick="confirmDelete()">Delete</button></div></div></div>
+<div id="renameModal" style="display:none" class="modal-bg"><div class="modal"><div style="font-size:16px;font-weight:600">Rename Device</div><div id="renameModalId" class="mono" style="font-size:10px;color:#71717a;margin-top:6px"></div><input id="renameInput" class="input" style="margin-top:16px;height:48px" placeholder="New name"><div style="display:flex;gap:10px;margin-top:16px"><button class="btn btn-g" style="flex:1;height:44px" onclick="closeRenameModal()">Cancel</button><button class="btn btn-w" style="flex:1;height:44px" onclick="confirmRename()">Save</button></div></div></div>
+<script>
+var API = window.location.origin;
+var token = localStorage.getItem('token');
+var devices = [];
+var curColor = '#facc15';
+var curBright = 80;
+var curSpeed = 3;
+var socket = null;
+var curDevId = '';
+var pendingDeleteId = null;
+var pendingRenameId = null;
+var presetColors = ["#facc15","#fb7185","#a78bfa","#38bdf8","#34d399","#ffffff","#ff7a18","#ef4444"];
+var offlineSet = {};
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
-const JWT_SECRET_NEW = 'thavayil-smarthome-secret-2024-fixed';
-const JWT_SECRET_OLD = 'my-super-secret-123-change-this';
-
-const MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URI || process.env.MONGO_URL;
-if(!MONGO_URL) console.log("WARNING: MONGODB_URI not set!");
-else console.log("Mongo URI found...");
-
-mongoose.connect(MONGO_URL).then(()=> console.log("MongoDB Connected ✅")).catch(e=> console.log("MongoDB Error:", e.message));
-mongoose.connection.on('error', e=> console.log("Mongo Error:", e.message));
-mongoose.connection.on('disconnected', ()=> console.log("Mongo Disconnected!"));
-
-const UserSchema = new mongoose.Schema({ id: String, email: {type:String, unique:true, lowercase:true, trim:true}, password: String });
-const CodeSchema = new mongoose.Schema({ code: String, userId: String, exp: Number });
-const DeviceSchema = new mongoose.Schema({
-  id: String,
-  deviceId: String,
-  userId: String,
-  name: String,
-  type: String,
-  displayCategory: String,
-  state: {type:String, default:'OFF'},
-  color: Object,
-  brightness: Number,
-  speed: Number,
-  createdAt: String
-}, { strict: false });
-
-const User = mongoose.model('User', UserSchema);
-const Code = mongoose.model('Code', CodeSchema);
-const Device = mongoose.model('Device', DeviceSchema);
-
-function verifyToken(t){
-  try{ return jwt.verify(t, JWT_SECRET_NEW); }
-  catch(e){ return jwt.verify(t, JWT_SECRET_OLD); }
+function gen10Digit(){ return Math.floor(1000000000 + Math.random()*9000000000).toString(); }
+function hexToHsb(hex){ hex=hex.replace('#',''); var r=parseInt(hex.slice(0,2),16)/255,g=parseInt(hex.slice(2,4),16)/255,b=parseInt(hex.slice(4,6),16)/255; var max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; var h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; } var s=max===0?0:d/max; var v=max*100; return { hue:Math.round(h), saturation:parseFloat(s.toFixed(2)), brightness:Math.round(v) }; }
+function hsbToHex(h,s,b){ s=s<=1?s*100:s; b=b<=100?b/100:b; s/=100; var c=b*s, x=c*(1-Math.abs((h/60)%2-1)), m=b-c, r=0,g=0,bl=0; if(h<60){r=c;g=x;bl=0;}else if(h<120){r=x;g=c;bl=0;}else if(h<180){r=0;g=c;bl=x;}else if(h<240){r=0;g=x;bl=c;}else if(h<300){r=x;g=0;bl=c;}else{r=c;g=0;bl=x;} r=Math.round((r+m)*255); g=Math.round((g+m)*255); bl=Math.round((bl+m)*255); var toHex=function(v){ var h=v.toString(16); return h.length===1?'0'+h:h; }; return '#'+toHex(r)+toHex(g)+toHex(bl); }
+function initDots(){ var html=''; for(var i=0;i<presetColors.length;i++){ var c=presetColors[i]; var border = (curColor===c)?'2px solid white':'1px solid rgba(255,255,255,0.2)'; html+='<button onclick="setColor(\''+c+'\')" style="width:28px;height:28px;border-radius:50%;background:'+c+';border:'+border+'"></button>'; } document.getElementById('colorDots').innerHTML=html; }
+function setColor(col){ curColor=col; document.getElementById('colorPicker').value=col; initDots(); var hsb=hexToHsb(col); document.getElementById('colorText').textContent=col.toUpperCase()+' -> hue:'+hsb.hue+' sat:'+hsb.saturation+' bri:'+hsb.brightness+' | '+curBright+'%'; }
+function setBright(v){ curBright=parseInt(v); document.getElementById('brightText').textContent=v+'%'; var hsb=hexToHsb(curColor); document.getElementById('colorText').textContent=curColor.toUpperCase()+' -> hue:'+hsb.hue+' sat:'+hsb.saturation+' bri:'+hsb.brightness+' | '+v+'%'; }
+function setSpeed(s){ curSpeed=s; for(var i=1;i<=5;i++){ var el=document.getElementById('s'+i); if(el){el.style.background=i===s?'#fff':'rgba(255,255,255,0.08)'; el.style.color=i===s?'#000':'#fff';}} }
+function genId(){ curDevId=gen10Digit(); document.getElementById('devIdDisplay').textContent=curDevId; }
+function copyDevId(){ if(!curDevId){genId();} navigator.clipboard.writeText(curDevId); showToast('ID '+curDevId+' copied'); }
+function onTypeChange(){ var t=document.getElementById('devType').value; document.getElementById('lightOpts').style.display=t==='LIGHT'?'flex':'none'; document.getElementById('fanOpts').style.display=t==='FAN'?'block':'none'; }
+function showToast(m){ var t=document.getElementById('toast'); document.getElementById('toastMsg').textContent=m; t.style.display='block'; setTimeout(function(){t.style.display='none'},3000); }
+function updateTokenDisplay(){ var c=localStorage.getItem('token')||token||'No token'; document.getElementById('tokenBox').textContent=c; token=c; }
+function connectRealtime(){
+  if (socket) socket.disconnect(); token = localStorage.getItem('token'); if (!token) return;
+  socket = io(API, { auth: { token: token } });
+  socket.on('connect', function(){ document.getElementById('liveStatus').innerHTML='LIVE'; });
+  socket.on('disconnect', function(){ document.getElementById('liveStatus').innerHTML='OFFLINE'; });
+  socket.on('devices_updated', function(newDevices){ devices = newDevices; render(); });
+  socket.on('device_updated', function(updated){ var idx = -1; for(var i=0;i<devices.length;i++){ if(devices[i].id===updated.id){ idx=i; break; } } if(idx>=0) { for(var k in updated){ devices[idx][k]=updated[k]; } } else { devices.push(updated); } render(); });
+  socket.on('device_deleted', function(data){ var nd=[]; for(var i=0;i<devices.length;i++){ if(devices[i].id!==data.id) nd.push(devices[i]); } devices=nd; render(); });
 }
-
-let alexaTokens = {};
-let googleTokens = {};
-let lastReportedState = {};
-
-async function getUserDevices(userId){ try{ return await Device.find({ userId }); }catch(e){ return []; } }
-
-async function emitDevice(userId, dev){
-  try{
-    const userDevices = await getUserDevices(userId);
-    io.to('user_'+userId).emit('device_updated', dev);
-    io.to('user_'+userId).emit('devices_updated_single', dev);
-    io.to('user_'+userId).emit('devices_updated', userDevices);
-    sendAlexaChangeReport(userId, dev);
-    sendGoogleReportState(userId, dev);
-  }catch(e){ console.log(e.message); }
+function initDash(){ document.getElementById('authView').style.display='none'; document.getElementById('dashView').style.display='block'; document.getElementById('signoutBtn').style.display='block'; document.getElementById('userEmail').textContent=localStorage.getItem('email')||''; updateTokenDisplay(); connectRealtime(); loadDevices(); initDots(); onTypeChange(); setColor(curColor); if(!curDevId) genId(); }
+function signout(){ if (socket) socket.disconnect(); localStorage.removeItem('token'); localStorage.removeItem('email'); token=null; document.getElementById('authView').style.display='block'; document.getElementById('dashView').style.display='none'; document.getElementById('signoutBtn').style.display='none'; showToast('Signed out'); }
+function copyToken(){ var t=localStorage.getItem('token')||token; if(!t||t.indexOf('No token')!==-1){showToast('Login first');return;} navigator.clipboard.writeText(t); showToast('Token copied'); }
+function register(){ 
+  var e=document.getElementById('email').value.trim();
+  var p=document.getElementById('pass').value.trim();
+  if(!e||!p){document.getElementById('authMsg').textContent='Enter email password';return;}
+  fetch(API+'/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})})
+  .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+  .then(function(res){ if(!res.ok){document.getElementById('authMsg').textContent=res.data.error;return;} localStorage.setItem('token',res.data.token); localStorage.setItem('email',e); token=res.data.token; initDash(); })
+  .catch(function(err){document.getElementById('authMsg').textContent=err.message;});
 }
-
-async function sendAlexaChangeReport(userId, dev){
-  try{
-    const token = alexaTokens[userId]; if(!token) return;
-    const https = require('https');
-    let properties = [];
-    properties.push({namespace:'Alexa.PowerController',name:'powerState',value:dev.state==='ON'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-    if(dev.type==='LIGHT' && dev.brightness!==undefined) properties.push({namespace:'Alexa.BrightnessController',name:'brightness',value:dev.brightness,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-    if(dev.type==='LIGHT' && dev.color) properties.push({namespace:'Alexa.ColorController',name:'color',value:{hue:dev.color.hue,saturation:dev.color.saturation,brightness:dev.color.brightness/100},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-    if(dev.type==='FAN' && dev.speed) properties.push({namespace:'Alexa.PercentageController',name:'percentage',value:dev.speed*20,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500});
-    const event = { context:{properties}, event:{ header:{namespace:'Alexa',name:'ChangeReport',payloadVersion:'3',messageId:Date.now().toString()}, endpoint:{endpointId:dev.id,scope:{type:'BearerToken',token}}, payload:{change:{cause:{type:'APP_INTERACTION'},properties}} } };
-    const data = JSON.stringify(event);
-    ['api.amazonalexa.com','api.eu.amazonalexa.com'].forEach(hostname=>{
-      const req = https.request({hostname,path:'/v3/events',method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,'Content-Length':Buffer.byteLength(data)}}, res=>{ let b=''; res.on('data',d=>b+=d); res.on('end',()=>console.log(`Alexa report ${dev.id} ${res.statusCode}`)); });
-      req.on('error',e=>console.log(e.message)); req.write(data); req.end();
-    });
-  }catch(e){}
+function login(){
+  var e=document.getElementById('email').value.trim();
+  var p=document.getElementById('pass').value.trim();
+  if(!e||!p){document.getElementById('authMsg').textContent='Enter email password';return;}
+  fetch(API+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e,password:p})})
+  .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+  .then(function(res){ if(!res.ok){document.getElementById('authMsg').textContent=res.data.error;return;} localStorage.setItem('token',res.data.token); localStorage.setItem('email',e); token=res.data.token; initDash(); })
+  .catch(function(err){document.getElementById('authMsg').textContent=err.message;});
 }
-
-async function sendGoogleReportState(userId, dev){
-  try{
-    if(!lastReportedState[userId]) lastReportedState[userId] = {};
-    let state = { online: true, on: dev.state==='ON' };
-    if(dev.type==='FAN'){
-      const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
-      state.currentFanSpeedSetting = map[dev.speed] || 'medium';
-    }
-    if(dev.type==='LIGHT'){
-      if(dev.brightness!==undefined) state.brightness = dev.brightness;
-      if(dev.color) state.color = { spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:(dev.color.brightness||100)/100 }};
-    }
-    lastReportedState[userId][dev.id] = {...state, ts: Date.now() };
-    console.log(`ReportState (local) ${dev.id} ->`, JSON.stringify(state));
-
-    const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
-    if(!saJson) return;
-    try{
-      const { JWT } = require('google-auth-library');
-      const sa = JSON.parse(saJson);
-      const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
-      const tokens = await client.authorize();
-      const https = require('https');
-      const body = JSON.stringify({ requestId: 'thavayil-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [dev.id]: state } } } });
-      const req = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, res=>{ res.on('data',()=>{}); res.on('end',()=>console.log(`HomeGraph Report ${dev.id} ${res.statusCode}`)); });
-      req.on('error', e=>console.log('HomeGraph error', e.message));
-      req.write(body); req.end();
-    }catch(e){ console.log('HomeGraph auth error', e.message); }
-  }catch(e){ console.log('ReportState error', e.message); }
+function loadDevices(){
+  token=localStorage.getItem('token')||token; if(!token) return;
+  fetch(API+'/api/devices',{headers:{Authorization:'Bearer '+token}})
+  .then(function(r){ if(!r.ok){ if(r.status===401){showToast('Login again'); signout(); return null;} throw new Error('Failed'); } return r.json(); })
+  .then(function(data){ if(!data) return; devices=Array.isArray(data)?data:data.devices||[]; render(); loadOfflineStatus(); })
+  .catch(function(err){ console.error(err); });
 }
-
-app.use(cors({ origin: "*" }));
-app.use(express.json());
-app.use(express.urlencoded({extended:true}));
-app.use(express.static('public'));
-
-app.get('/privacy',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px;font-family:sans-serif"><h1>Privacy Policy - Thavayil SmartHome</h1><p>We collect email and device states for smart home control. Contact: thavayil.ckm@gmail.com</p></div>`); });
-app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Terms</h1><p>Thavayil SmartHome</p></div>`); });
-app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Support - thavayil.ckm@gmail.com</h1></div>`); });
-app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState, mongoLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState], time: new Date().toISOString()}); });
-global.offlineDevices = global.offlineDevices || new Set();
-// Helper for Google Test Suite - manually make device offline/online
-app.post('/test/offline', async (req,res)=>{
-  const {deviceId, online} = req.body;
-  if(!deviceId) return res.status(400).json({error:'deviceId required'});
-  if(online===false) global.offlineDevices.add(deviceId);
-  else global.offlineDevices.delete(deviceId);
-  console.log('TEST offline set', deviceId, 'online=', online, 'set=', Array.from(global.offlineDevices));
-  res.json({success:true, offlineDevices: Array.from(global.offlineDevices)});
-});
-app.get('/test/offline', (req,res)=>{ res.json({offlineDevices: Array.from(global.offlineDevices||[]) }); });
-
-app.get('/debug', async (req,res)=>{
-  res.json({
-    mongo_state: mongoose.connection.readyState,
-    MONGO_URL_exists: !!MONGO_URL,
-    user_count: await User.countDocuments().catch(e=>e.message),
+function loadOfflineStatus(){
+  fetch(API+'/test/offline',{headers:{Authorization:'Bearer '+(localStorage.getItem('token')||'')}})
+  .then(function(r){return r.json();}).then(function(d){
+    offlineSet={}; var list=d.offlineDevices||[]; for(var i=0;i<list.length;i++){ offlineSet[list[i]]=true; }
+    render();
+  }).catch(function(){});
+}
+function toggleOnlineStatus(id){
+  var isOffline = offlineSet[id];
+  var newOnline = isOffline ? true : false;
+  fetch(API+'/test/offline',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(localStorage.getItem('token')||'')},body:JSON.stringify({deviceId:id, online:newOnline})})
+  .then(function(r){return r.json();}).then(function(res){
+    showToast(id + (newOnline?' ONLINE':' OFFLINE'));
+    loadOfflineStatus();
   });
-});
-
-app.post('/auth/register', async (req,res)=>{
-  try{
-    const email = (req.body.email||'').toLowerCase().trim();
-    const password = (req.body.password||'').trim();
-    if(!email||!password) return res.status(400).json({error:'email and password required'});
-    const existing = await User.findOne({email});
-    if(existing) return res.status(400).json({error:'user exists, please login'});
-    const user={id:Date.now().toString(), email, password};
-    const created = await User.create(user);
-    const token=jwt.sign({userId:created.id,email}, JWT_SECRET_NEW, {noTimestamp:true});
-    res.json({token,userId:created.id});
-  }catch(e){ console.error("REGISTER ERROR", e); res.status(500).json({error: e.message}); }
-});
-
-app.post('/auth/login', async (req,res)=>{
-  try{
-    const email = (req.body.email||'').toLowerCase().trim();
-    const password = (req.body.password||'').trim();
-    if(!email||!password) return res.status(400).json({error:'email and password required'});
-    const user = await User.findOne({email});
-    if(!user) return res.status(401).json({error:'user not found - register first. Checked email: '+email});
-    if(user.password !== password) return res.status(401).json({error:'wrong password'});
-    const token=jwt.sign({userId:user.id,email:user.email}, JWT_SECRET_NEW, {noTimestamp:true});
-    res.json({token,userId:user.id});
-  }catch(e){ console.error("LOGIN ERROR", e); res.status(500).json({error: e.message}); }
-});
-
-app.get('/oauth/authorize',(req,res)=>{
-  const {redirect_uri,state,client_id}=req.query;
-  res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link your account to ${client_id?.includes('google')?'Google Home':'Alexa'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button type="submit">Link Account</button></form></div></body></html>`);
-});
-app.post('/oauth/authorize', async (req,res)=>{
-  try{
-    const email = req.body.email.toLowerCase().trim();
-    const user=await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
-    if(!user) return res.send('Invalid credentials <a href="javascript:history.back()">Back</a>');
-    const code=Math.random().toString(36).substring(10);
-    await Code.create({code,userId:user.id,exp:Date.now()+600000});
-    res.redirect(`${req.query.redirect_uri}?code=${code}&state=${req.query.state}`);
-  }catch(e){ res.send('Error: '+e.message); }
-});
-app.post('/oauth/token', async (req,res)=>{
-  try{
-    const entry=await Code.findOne({code:req.body.code});
-    if(!entry) return res.status(400).json({error:'invalid code'});
-    const token=jwt.sign({userId:entry.userId}, JWT_SECRET_NEW, {noTimestamp:true});
-    res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
-function authMiddleware(req,res,next){
-  try{
-    const token=req.headers.authorization?.replace('Bearer ','');
-    if(!token) throw new Error('no token');
-    req.user=verifyToken(token); next();
-  }catch(e){ res.status(401).json({error:'unauth - login again'}); }
 }
-
-app.get('/api/devices', authMiddleware, async (req,res)=>{
-  try{ const devs=await Device.find({userId:req.user.userId}); res.json(devs); }catch(e){ res.status(500).json({error:e.message}); }
-});
-function gen10DigitId(){ return Math.floor(1000000000 + Math.random()*9000000000).toString(); }
-
-app.post('/api/devices', authMiddleware, async (req,res)=>{
-  try{
-    const {name,type,id,color,brightness,speed}=req.body;
-    if(!name||!type) return res.status(400).json({error:'name type required'});
-    let deviceId = id && /^\d{10}$/.test(id)? id : gen10DigitId();
-    let exists = await Device.findOne({id: deviceId, userId: req.user.userId});
-    while(exists){ deviceId = gen10DigitId(); exists = await Device.findOne({id: deviceId, userId: req.user.userId}); }
-    const upper=type.toUpperCase(); let cat=upper==='LIGHT'?'LIGHT':upper==='FAN'?'FAN':'SWITCH';
-    let dev={id:deviceId,deviceId,userId:req.user.userId,name,type:upper,displayCategory:cat,state:'OFF',createdAt:new Date().toISOString()};
-    if(upper==='LIGHT'){ let hsb={hue:45,saturation:1,brightness:100}; if(color&&typeof color==='object'&&color.hue!==undefined) hsb=color; if(brightness) hsb.brightness=parseInt(brightness); dev.color=hsb; dev.brightness=hsb.brightness; }
-    else if(upper==='FAN'){ dev.speed=speed?parseInt(speed):3; }
-    const created = await Device.create(dev);
-    await emitDevice(req.user.userId, created);
-    res.json(created);
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.patch('/api/devices/:id/rename', authMiddleware, async (req,res)=>{
-  try{
-    const {name}=req.body;
-    if(!name || name.trim().length<2) return res.status(400).json({error:'valid name required'});
-    let dev = await Device.findOne({id:req.params.id, userId:req.user.userId});
-    if(!dev) return res.status(404).json({error:'device not found'});
-    dev.name = name.trim();
-    await dev.save();
-    await emitDevice(req.user.userId, dev);
-    res.json({success:true, device:dev});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.delete('/api/devices/:id', authMiddleware, async (req,res)=>{
-  try{ await Device.deleteOne({id:req.params.id, userId:req.user.userId}); io.to('user_'+req.user.userId).emit('device_deleted',{id:req.params.id}); res.json({success:true}); }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.post('/api/device/control', authMiddleware, async (req,res)=>{
-  try{
-    const {deviceId,action,color,brightness,speed}=req.body;
-    let dev=await Device.findOne({id:deviceId, userId:req.user.userId}) || await Device.findOne({deviceId, userId:req.user.userId});
-    if(dev){
-      if(action==='TurnOn') dev.state='ON';
-      if(action==='TurnOff') dev.state='OFF';
-      if(color&&dev.type==='LIGHT'){ dev.color=color; dev.brightness=color.brightness||dev.brightness; }
-      if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); dev.state='ON'; }
-      if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
-      await dev.save(); await emitDevice(req.user.userId, dev);
-      io.to('user_'+req.user.userId).emit('alexa_cmd',{deviceId,action:action||'TurnOn',color,brightness,speed});
+function render(){
+  updateTokenDisplay();
+  document.getElementById('myDevCount').textContent=devices.length;
+  var out='';
+  for(var i=0;i<devices.length;i++){
+    var d=devices[i];
+    var col=d.color;
+    var hex=col?hsbToHex(col.hue,col.saturation,col.brightness||100):'#ffffff';
+    var isLight=d.displayCategory==='LIGHT'; var isFan=d.displayCategory==='FAN';
+    var hsbBri = col && col.brightness? col.brightness : 100;
+    var isOffline = offlineSet[d.id];
+    out+='<div class="card-inner" style="padding:16px;border:1px solid '+(isOffline?'rgba(239,68,68,0.4)':(d.state==='ON'?'rgba(16,185,129,0.3)':'rgba(255,255,255,0.07)'))+'">';
+    out+='<div style="margin-bottom:10px"><button onclick="toggleOnlineStatus(\''+d.id+'\')" style="width:100%;height:36px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid '+(isOffline?'rgba(239,68,68,0.4)':'rgba(16,185,129,0.4)')+';background:'+(isOffline?'rgba(239,68,68,0.15)':'rgba(16,185,129,0.15)')+';color:'+(isOffline?'#ef4444':'#10b981')+'">'+(isOffline?'OFFLINE - Click to set ONLINE':'ONLINE - Click to set OFFLINE')+'</button></div>';
+    out+='<div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:10px;align-items:center"><div style="width:40px;height:40px;border-radius:12px;background:'+(d.state==='ON'?'rgba(16,185,129,0.15)':'rgba(255,255,255,0.06)')+';display:flex;align-items:center;justify-content:center;font-size:18px">'+(isLight?'LIGHT':isFan?'FAN':'SWITCH')+'</div><div><div style="display:flex;align-items:center;gap:6px"><div style="font-size:13px;font-weight:600">'+d.name+'</div><button onclick="openRenameModal(\''+d.id+'\')" style="background:rgba(255,255,255,0.08);border:0;border-radius:6px;padding:2px 6px;color:#a1a1aa;cursor:pointer;font-size:10px">Rename</button><span style="font-size:9px;padding:2px 6px;border-radius:10px;background:'+(d.state==='ON'?'rgba(16,185,129,0.2)':'rgba(255,255,255,0.1)')+'">'+d.displayCategory+' - '+d.state+'</span></div><div style="display:flex;align-items:center;gap:6px;margin-top:2px"><div class="mono" style="font-size:11px;color:#10b981;letter-spacing:1px">'+d.id+'</div><button onclick="copyDeviceId(\''+d.id+'\')" style="background:rgba(255,255,255,0.08);border:0;border-radius:4px;padding:1px 5px;color:#fff;cursor:pointer;font-size:9px">Copy</button></div></div></div><button onclick="openDeleteModal(\''+d.id+'\')" style="width:28px;height:28px;border-radius:50%;background:rgba(239,68,68,0.12);border:0;color:#ef4444;cursor:pointer">x</button></div>';
+    out+='<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.4);padding:12px 14px;border-radius:12px"><div><div style="font-size:10px;color:#71717a">ON / OFF</div><div style="font-size:13px;font-weight:700;margin-top:2px">'+d.state+'</div></div><div class="toggle '+(d.state==='ON'?'on':'')+'" onclick="toggleDevice(\''+d.id+'\')"><div class="toggle-dot"></div></div></div>';
+    if(isLight){
+      out+='<div style="margin-top:12px;background:rgba(0,0,0,0.3);padding:12px;border-radius:12px"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+      var colors=["#facc15","#fb7185","#a78bfa","#38bdf8","#34d399","#ffffff","#ff7a18","#ef4444"];
+      for(var c=0;c<colors.length;c++){ var bdr = (hex.toLowerCase()===colors[c].toLowerCase())?'white':'rgba(255,255,255,0.1)'; out+='<button onclick="changeColor(\''+d.id+'\',\''+colors[c]+'\')" style="width:28px;height:28px;border-radius:50%;background:'+colors[c]+';border:2px solid '+bdr+'"></button>'; }
+      out+='</div><div style="display:flex;align-items:center;gap:10px"><div style="width:24px;height:24px;border-radius:50%;background:'+hex+';border:1px solid rgba(255,255,255,0.2)"></div><span class="mono" style="font-size:11px;color:#facc15;font-weight:600">hue:'+(col?col.hue:0)+' sat:'+(col?col.saturation:0)+' bri:'+hsbBri+'</span></div></div>';
+      out+='<div style="margin-top:8px;background:rgba(255,255,255,0.04);border-radius:12px;padding:12px"><div style="display:flex;justify-content:space-between;font-size:10px;color:#71717a"><span>BRIGHTNESS</span><span>'+(d.brightness||80)+'%</span></div><input type="range" class="slider" min="5" max="100" value="'+(d.brightness||80)+'" oninput="changeBright(\''+d.id+'\',this.value)" style="width:100%;margin-top:6px"></div>';
     }
-    res.json({success:true,device:dev});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/alexa/smarthome', async (req,res)=>{
-  try{
-    const auth=req.headers.authorization; if(!auth) return res.status(401).json({error:'no auth'});
-    const token=auth.replace('Bearer ','');
-    let decoded; try{ decoded=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid token'}); }
-    const userId=decoded.userId;
-    const directive=req.body.directive; if(!directive) return res.status(400).json({error:'no directive'});
-    const header=directive.header; const ns=header.namespace; const name=header.name;
-    try{ let alexaToken = directive.payload?.scope?.token || directive.endpoint?.scope?.token || token; if(alexaToken) alexaTokens[userId]=alexaToken; }catch(e){}
-    if(ns==='Alexa.Authorization' && name==='AcceptGrant') return res.json({event:{header:{namespace:'Alexa.Authorization',name:'AcceptGrant.Response',payloadVersion:'3',messageId:header.messageId},payload:{}}});
-    if(ns==='Alexa.Discovery' && name==='Discover'){
-      const userDevices=await Device.find({userId});
-      const endpoints=userDevices.map(d=>{
-        let caps=[{type:'AlexaInterface',interface:'Alexa',version:'3'},{type:'AlexaInterface',interface:'Alexa.PowerController',version:'3',properties:{supported:[{name:'powerState'}],proactivelyReported:true,retrievable:true}}];
-        if(d.type==='LIGHT'){ caps.push({type:'AlexaInterface',interface:'Alexa.BrightnessController',version:'3',properties:{supported:[{name:'brightness'}],proactivelyReported:true,retrievable:true}}); caps.push({type:'AlexaInterface',interface:'Alexa.ColorController',version:'3',properties:{supported:[{name:'color'}],proactivelyReported:true,retrievable:true}}); }
-        if(d.type==='FAN') caps.push({type:'AlexaInterface',interface:'Alexa.PercentageController',version:'3',properties:{supported:[{name:'percentage'}],proactivelyReported:true,retrievable:true}});
-        return { endpointId:d.id, manufacturerName:'Thavayil Electronics', friendlyName:d.name, description:`${d.type} via Thavayil SmartHome`, displayCategories:[d.displayCategory||'SWITCH'], capabilities:caps };
-      });
-      return res.json({event:{header:{namespace:'Alexa.Discovery',name:'Discover.Response',payloadVersion:'3',messageId:header.messageId},payload:{endpoints}}});
+    if(isFan){
+      out+='<div style="margin-top:12px;background:rgba(0,0,0,0.3);padding:12px;border-radius:12px"><div style="display:flex;gap:6px">';
+      for(var s=1;s<=5;s++){ out+='<button onclick="changeSpeed(\''+d.id+'\','+s+')" style="flex:1;height:40px;border-radius:10px;background:'+((d.speed||3)===s?'#fff':'rgba(255,255,255,0.08)')+';color:'+((d.speed||3)===s?'#000':'#fff')+';border:0;font-weight:600">'+s+'</button>'; }
+      out+='</div></div>';
     }
-    if(ns==='Alexa.PowerController'){
-      const endpointId=directive.endpoint.endpointId; const action=name==='TurnOn'?'TurnOn':'TurnOff';
-      let dev=await Device.findOne({id:endpointId, userId}); if(dev){ dev.state=action==='TurnOn'?'ON':'OFF'; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action}); }
-      return res.json({event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},context:{properties:[{namespace:'Alexa.PowerController',name:'powerState',value:action==='TurnOn'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}});
-    }
-    if(ns==='Alexa.BrightnessController'){
-      const endpointId=directive.endpoint.endpointId; let dev=await Device.findOne({id:endpointId, userId}); let brightness=directive.payload.brightness;
-      if(name==='AdjustBrightness' && dev) brightness=Math.min(100,Math.max(1,(dev.brightness||50)+(directive.payload.brightnessDelta||0)));
-      if(dev){ dev.state='ON'; dev.brightness=brightness; if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=brightness; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetBrightness',brightness}); }
-      return res.json({event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},context:{properties:[{namespace:'Alexa.PowerController',name:'powerState',value:'ON',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500},{namespace:'Alexa.BrightnessController',name:'brightness',value:brightness,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}});
-    }
-    if(ns==='Alexa.ColorController' && name==='SetColor'){
-      const endpointId=directive.endpoint.endpointId; const color=directive.payload.color; let h=Math.round(color.hue); let s=parseFloat(color.saturation); let b=Math.round((color.brightness||1)*100);
-      let dev=await Device.findOne({id:endpointId, userId}); if(dev){ dev.state='ON'; dev.color={hue:h,saturation:s,brightness:b}; dev.brightness=b; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetColor',color:{hue:h,saturation:s,brightness:b}}); }
-      return res.json({event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},context:{properties:[{namespace:'Alexa.ColorController',name:'color',value:{hue:h,saturation:s,brightness:color.brightness},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}});
-    }
-    if(ns==='Alexa.PercentageController'){
-      const endpointId=directive.endpoint.endpointId; const perc=directive.payload.percentage; let speed=Math.ceil(perc/20); if(speed<1)speed=1; if(speed>5)speed=5;
-      let dev=await Device.findOne({id:endpointId, userId}); if(dev){ dev.state='ON'; dev.speed=speed; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetSpeed',speed}); }
-      return res.json({event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},context:{properties:[{namespace:'Alexa.PercentageController',name:'percentage',value:perc,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}});
-    }
-    if(ns==='Alexa' && name==='ReportState'){
-      const endpointId=directive.endpoint.endpointId; let dev=await Device.findOne({id:endpointId, userId}); if(!dev) dev=await Device.findOne({id:endpointId}); let props=[];
-      if(dev){ props.push({namespace:'Alexa.PowerController',name:'powerState',value:dev.state==='ON'?'ON':'OFF',timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}); if(dev.brightness!==undefined) props.push({namespace:'Alexa.BrightnessController',name:'brightness',value:parseInt(dev.brightness),timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}); if(dev.color) props.push({namespace:'Alexa.ColorController',name:'color',value:{hue:dev.color.hue||0,saturation:dev.color.saturation||0,brightness:(dev.color.brightness||100)/100},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}); if(dev.speed!==undefined) props.push({namespace:'Alexa.PercentageController',name:'percentage',value:(dev.speed||3)*20,timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}); }
-      return res.json({context:{properties:props},event:{header:{namespace:'Alexa',name:'StateReport',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}}});
-    }
-    res.status(400).json({error:'unsupported'});
-  }catch(e){ console.error('ALEXA ERROR',e); res.status(500).json({error:e.message}); }
-});
-
-function googleDeviceTraits(d){
-  if(d.type==='FAN') return ['action.devices.traits.OnOff','action.devices.traits.FanSpeed'];
-  if(d.type==='LIGHT') return ['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting'];
-  return ['action.devices.traits.OnOff'];
+    out+='</div>';
+  }
+  if(out==='') out='<div style="padding:30px;text-align:center;color:#71717a;font-size:12px">No devices - Add LIGHT/FAN/SWITCH</div>';
+  document.getElementById('devices').innerHTML=out;
+  var pins=[2,4,5,16,17,18,19,21,22,23];
+  var deviceList='';
+  for(var j=0;j<devices.length;j++){
+    var dd=devices[j];
+    var ccol=dd.color||{hue:0,saturation:0,brightness:100}; var spd=dd.speed||0; var brt=dd.brightness||80;
+    if(j>0) deviceList+='\n';
+    if(dd.displayCategory==='LIGHT') deviceList+='  {"'+dd.id+'", '+pins[j%pins.length]+', "'+dd.displayCategory+'", '+ccol.hue+', '+ccol.saturation+', '+ccol.brightness+', '+brt+', 0}';
+    else if(dd.displayCategory==='FAN') deviceList+='  {"'+dd.id+'", '+pins[j%pins.length]+', "'+dd.displayCategory+'", 0, 0, 0, 0, '+spd+'}';
+    else deviceList+='  {"'+dd.id+'", '+pins[j%pins.length]+', "'+dd.displayCategory+'", 0, 0, 0, 0, 0}';
+  }
+  if(deviceList==='') deviceList='  {"'+(curDevId||gen10Digit())+'", 2, "LIGHT", 45, 1.0, 100, 80, 0}';
+  var userToken=localStorage.getItem('token')||'LOGIN_FIRST';
+  var code='#include <WiFi.h>\n#include <SocketIoClient.h>\n#include <ArduinoJson.h>\nSocketIoClient socket;\nconst char* WIFI_SSID = "YOUR_WIFI";\nconst char* WIFI_PASS = "YOUR_PASS";\nconst char* SERVER_IP = "thavayil-smarthome.onrender.com";\nconst int SERVER_PORT = 443;\nconst char* USER_TOKEN = "'+userToken+'";\n\nstruct Device { const char* id; int pin; const char* category; int hue; float sat; int hsbBri; int devBri; int speed; };\nDevice devices[] = {\n'+deviceList+'\n};\nconst int DEVICE_COUNT = '+(devices.length||1)+';\n';
+  document.getElementById('codeBlock').textContent=code;
 }
-function googleDeviceType(d){
-  if(d.type==='LIGHT') return 'action.devices.types.LIGHT';
-  if(d.type==='FAN') return 'action.devices.types.FAN';
-  return 'action.devices.types.SWITCH';
-}
-
-app.post('/google/smarthome', async (req,res)=>{
-  try{
-    const auth=req.headers.authorization; if(!auth) return res.status(401).json({error:'no auth'});
-    const token=auth.replace('Bearer ','');
-    let decoded; try{ decoded=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid token'}); }
-    const userId=decoded.userId;
-    googleTokens[userId]=token;
-    const requestId = req.body.requestId;
-    const intent = req.body.inputs?.[0]?.intent;
-    console.log(`GOOGLE ${intent} for user ${userId}`);
-
-    if(intent==='action.devices.SYNC'){
-      const userDevices=await Device.find({userId});
-      const devices=userDevices.map(d=>{
-        let traits = googleDeviceTraits(d);
-        let attributes = {};
-        if(d.type==='LIGHT'){ attributes.colorModel='hsv'; }
-        if(d.type==='FAN'){
-          attributes.availableFanSpeeds={
-            speeds:[
-              {speed_name:'low', speed_values:[{speed_synonym:['low','1','slow'], lang:'en'}]},
-              {speed_name:'medium', speed_values:[{speed_synonym:['medium','2','3','mid'], lang:'en'}]},
-              {speed_name:'high', speed_values:[{speed_synonym:['high','4','5','max'], lang:'en'}]}
-            ], ordered:true
-          };
-          attributes.reversible=false;
-        }
-        return {
-          id:d.id,
-          type: googleDeviceType(d),
-          traits,
-          name:{defaultNames:[d.id], name:d.name, nicknames:[d.name]},
-          willReportState: false,
-          attributes,
-          deviceInfo:{manufacturer:'Thavayil Electronics', model:'Thavayil SmartHome v1', hwVersion:'1.0', swVersion:'1.0'}
-        };
-      });
-      return res.json({requestId, payload:{agentUserId:userId, devices}});
-    }
-
-    if(intent==='action.devices.QUERY'){
-      const payloadDevices = req.body.inputs[0].payload.devices;
-      const userDevices=await Device.find({userId});
-      let devicesState = {};
-      for(const q of payloadDevices){
-        const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        // FIX: Never return online:false at start of test - that breaks OnlineOffline test
-        // Only return offline if device is in manual offline set
-        const isOffline = global.offlineDevices && global.offlineDevices.has(q.id);
-        if(!d){
-          // If not found, return online:true so "is online before test" passes
-          devicesState[q.id]={online: isOffline?false:true, on:false, status:'SUCCESS'};
-          continue;
-        }
-        let state = {online: isOffline?false:true, on: d.state==='ON', status:'SUCCESS'};
-        if(d.type==='FAN'){
-          const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
-          state.currentFanSpeedSetting = map[d.speed] || 'medium';
-        }
-        if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 80;
-          const col = d.color || {hue:45, saturation:1, brightness: bri};
-          state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
-        }
-        devicesState[q.id]=state;
-      }
-      console.log('QUERY result', JSON.stringify(devicesState));
-      return res.json({requestId, payload:{devices:devicesState}});
-    }
-
-    if(intent==='action.devices.EXECUTE'){
-      const commands = req.body.inputs[0].payload.commands;
-      let results = [];
-      for(const cmd of commands){
-        for(const devReq of cmd.devices){
-          const id = devReq.id;
-          let dev=await Device.findOne({id, userId}) || await Device.findOne({deviceId:id, userId});
-          if(!dev) { results.push({ids:[id], status:'ERROR', errorCode:'deviceNotFound'}); continue; }
-          let newState = {online:true};
-          for(const ex of cmd.execution){
-            const params = ex.params;
-            if(ex.command==='action.devices.commands.OnOff'){
-              dev.state = params.on? 'ON' : 'OFF';
-              newState.on = params.on;
-              if(dev.type==='FAN'){
-                if(params.on && !dev.speed) dev.speed = 3;
-                const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
-                newState.currentFanSpeedSetting = map[dev.speed] || 'medium';
-              }
-              if(dev.type==='LIGHT'){
-                const bri = (dev.brightness!==undefined)? dev.brightness : 80;
-                const col = dev.color || {hue:45, saturation:1, brightness: bri};
-                newState.brightness = bri;
-                newState.color = { spectrumHsv:{ hue: col.hue||45, saturation: col.saturation||1, value: (col.brightness||bri)/100 } };
-              }
-            }
-            if(ex.command==='action.devices.commands.SetFanSpeed'){
-              const mapStr = {low:1, medium:3, high:5};
-              let num = mapStr[params.fanSpeed.toLowerCase()] || 3;
-              dev.speed = num;
-              dev.state = 'ON';
-              newState.on = true;
-              newState.currentFanSpeedSetting = params.fanSpeed.toLowerCase();
-            }
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){
-              dev.brightness = params.brightness;
-              if(!dev.color) dev.color={hue:45,saturation:1,brightness:100};
-              dev.color.brightness = params.brightness;
-              dev.state='ON';
-              newState.on = true;
-              newState.brightness = params.brightness;
-            }
-            if(ex.command==='action.devices.commands.ColorAbsolute' && params.color?.spectrumHSV){
-              const hsv=params.color.spectrumHSV;
-              dev.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:Math.round(hsv.value*100)};
-              dev.brightness=dev.color.brightness;
-              dev.state='ON';
-              newState.on = true;
-              newState.color = {spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:hsv.value}};
-            }
-          }
-          await dev.save();
-          await emitDevice(userId, dev);
-          io.to('user_'+userId).emit('alexa_cmd',{deviceId:id, action: newState.on?'TurnOn':'TurnOff'});
-          results.push({ids:[id], status:'SUCCESS', states:newState});
-        }
-      }
-      return res.json({requestId, payload:{commands: results}});
-    }
-
-    if(intent==='action.devices.DISCONNECT'){ return res.json({requestId, payload:{}}); }
-    res.status(400).json({error:'unsupported intent '+intent});
-  }catch(e){ console.error('GOOGLE ERROR',e); res.status(500).json({error:e.message}); }
-});
-
-io.use((socket,next)=>{
-  try{
-    const token=socket.handshake.auth?.token || socket.handshake.query?.token;
-    if(!token) throw new Error('no token');
-    const dec=verifyToken(token);
-    socket.userId=dec.userId; next();
-  }catch(e){ next(new Error('auth failed')); }
-});
-io.on('connection', async (socket)=>{
-  console.log('Connected user:',socket.userId);
-  socket.join('user_'+socket.userId);
-  try{ const userDevs=await Device.find({userId:socket.userId}); socket.emit('devices_updated', userDevs); }catch(e){}
-  socket.on('disconnect',()=>console.log('Disconnected',socket.userId));
-});
-
-const PORT=process.env.PORT||10000;
-server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
+function copyCode(){ navigator.clipboard.writeText(document.getElementById('codeBlock').textContent); showToast('ESP code copied'); }
+function copyDeviceId(id){ navigator.clipboard.writeText(id); showToast('ID '+id+' copied'); }
+function openRenameModal(id){ var d=null; for(var i=0;i<devices.length;i++){ if(devices[i].id===id){ d=devices[i]; break; } } if(!d) return; pendingRenameId=id; document.getElementById('renameModalId').textContent='ID: '+id; document.getElementById('renameInput').value=d.name; document.getElementById('renameModal').style.display='flex'; }
+function closeRenameModal(){ document.getElementById('renameModal').style.display='none'; pendingRenameId=null; }
+function confirmRename(){ if(!pendingRenameId) return; var newName=document.getElementById('renameInput').value.trim(); if(!newName){showToast('Enter name');return;} token=localStorage.getItem('token')||token; fetch(API+'/api/devices/'+pendingRenameId+'/rename',{method:'PATCH',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({name:newName})}).then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); }).then(function(res){ if(!res.ok){ showToast(res.data.error); return; } showToast('Renamed'); closeRenameModal(); }).catch(function(e){ showToast(e.message); }); }
+function openDeleteModal(id){ var d=null; for(var i=0;i<devices.length;i++){ if(devices[i].id===id){ d=devices[i]; break; } } pendingDeleteId=id; document.getElementById('deleteModalName').textContent=d?d.name+' - '+d.displayCategory:''; document.getElementById('deleteModalId').textContent=id; document.getElementById('deleteModal').style.display='flex'; }
+function closeDeleteModal(){ document.getElementById('deleteModal').style.display='none'; pendingDeleteId=null; }
+function confirmDelete(){ if(!pendingDeleteId) return; token=localStorage.getItem('token')||token; fetch(API+'/api/devices/'+pendingDeleteId,{method:'DELETE',headers:{Authorization:'Bearer '+token}}).then(function(){ closeDeleteModal(); showToast('Deleted'); }); }
+function addDevice(){ token=localStorage.getItem('token')||token; var name=document.getElementById('devName').value.trim(); var type=document.getElementById('devType').value; var id=curDevId||gen10Digit(); if(!name){showToast('Enter device name');return;} if(!/^\d{10}$/.test(id)){showToast('ID must be 10 digit'); genId(); return;} var body={name:name,type:type,id:id,deviceId:id}; if(type==='LIGHT'){ var hsb=hexToHsb(curColor); body.color={hue:hsb.hue,saturation:hsb.saturation,brightness:hsb.brightness}; body.brightness=curBright; } else if(type==='FAN'){ body.speed=curSpeed; } fetch(API+'/api/devices',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)}).then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); }).then(function(res){ if(!res.ok){ showToast(res.data.error); return; } showToast('Added '+name); genId(); document.getElementById('devName').value=''; }).catch(function(err){ showToast(err.message); }); }
+function toggleDevice(id){ token=localStorage.getItem('token')||token; var d=null; for(var i=0;i<devices.length;i++){ if(devices[i].id===id){ d=devices[i]; break; } } if(!d) return; var ns=d.state==='ON'?'OFF':'ON'; fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:d.id,action:ns==='ON'?'TurnOn':'TurnOff'})}); }
+function changeColor(id, hex){ token=localStorage.getItem('token')||token; var hsb=hexToHsb(hex); fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:id,action:'SetColor',color:{hue:hsb.hue,saturation:hsb.saturation,brightness:hsb.brightness}})}); }
+function changeBright(id, b){ token=localStorage.getItem('token')||token; fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:id,action:'SetBrightness',brightness:parseInt(b)})}); }
+function changeSpeed(id, s){ token=localStorage.getItem('token')||token; fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:id,action:'SetSpeed',speed:parseInt(s)})}); }
+if(localStorage.getItem('token')){ token=localStorage.getItem('token'); var em=document.getElementById('userEmail'); if(em) em.textContent=localStorage.getItem('email')||''; var sb=document.getElementById('signoutBtn'); if(sb) sb.style.display='block'; initDash(); }
+initDots(); onTypeChange(); setColor(curColor); updateTokenDisplay(); genId();
+</script>
+</body>
+</html>
