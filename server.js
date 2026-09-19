@@ -21,7 +21,7 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V67 DISCOVERY FIX ALEXA LINK FIX...');
+console.log('Starting V68 DISCOVERY NAME FIX ALEXA LINK FIX...');
 mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V66')).catch(e=>console.log('Mongo error', e.message));
 
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
@@ -110,7 +110,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // TEST
-app.get('/test/version', (req,res)=> res.json({version:'V67_DISCOVERY_FIX', ok:true}));
+app.get('/test/version', (req,res)=> res.json({version:'V68_DISCOVERY_NAME_FIX', ok:true}));
 app.get('/test/offline/clear', async (req,res)=>{
   await OfflineState.deleteMany({}); await Device.updateMany({}, {offline:false}); offlineDevices.clear();
   res.json({success:true, version:'V66'});
@@ -287,7 +287,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
             endpointId:(d.id||d.deviceId).toString(),
             manufacturerName:'Thavayil Electronics',
             description:(d.type||'SWITCH')+' '+(d.name||'Device'),
-            friendlyName:d.name||('Device '+(d.id||'').substring(0,4)),
+            friendlyName:(d.name && d.name.length>=3 ? d.name : (d.name+' Light').trim()) || ('Device '+(d.id||'').substring(0,4)),
             displayCategories:[d.type==='LIGHT'?'LIGHT':d.type==='FAN'?'FAN':'SWITCH'],
             cookie:{userId:userId, deviceId:(d.id||d.deviceId).toString()},
             capabilities:caps
@@ -356,6 +356,6 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.log('ALEXA ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
 });
 
-app.get('/', (req,res)=> res.send('<h1>Thavayil V67 DISCOVERY FIX ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil V68 DISCOVERY NAME FIX ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil V67 DISCOVERY FIX Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil V68 DISCOVERY NAME FIX Port ${PORT}`));
