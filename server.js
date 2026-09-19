@@ -404,42 +404,64 @@ function googleDeviceType(d){
 
 app.post('/google/smarthome', async (req,res)=>{
   try{
-    const auth=req.headers.authorization; if(!auth) return res.status(401).json({error:'no auth'});
+    console.log('GOOGLE RAW REQ:', JSON.stringify({headers:req.headers.authorization?.substring(0,20), body:req.body}).substring(0,500));
+    const auth=req.headers.authorization; 
+    if(!auth) {
+      console.log('GOOGLE NO AUTH HEADER');
+      return res.status(401).json({error:'no auth'});
+    }
     const token=auth.replace('Bearer ','');
-    let decoded; try{ decoded=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid token'}); }
+    let decoded; 
+    try{ decoded=verifyToken(token); }
+    catch(e){ 
+      console.log('GOOGLE INVALID TOKEN', e.message, token.substring(0,20));
+      return res.status(401).json({error:'invalid token'}); 
+    }
     const userId=decoded.userId;
     googleTokens[userId]=token;
-    const requestId = req.body.requestId;
+    const requestId = req.body.requestId || 'test-123';
     const intent = req.body.inputs?.[0]?.intent;
-    console.log(`GOOGLE ${intent} for user ${userId}`);
+    console.log(`GOOGLE ${intent} for user ${userId} requestId ${requestId}`);
 
     if(intent==='action.devices.SYNC'){
-      const userDevices=await Device.find({userId});
-      const devices=userDevices.map(d=>{
-        let traits = googleDeviceTraits(d);
-        let attributes = {};
-        if(d.type==='LIGHT'){ attributes.colorModel='hsv'; }
-        if(d.type==='FAN'){
-          attributes.availableFanSpeeds={
-            speeds:[
-              {speed_name:'low', speed_values:[{speed_synonym:['low','1','slow'], lang:'en'}]},
-              {speed_name:'medium', speed_values:[{speed_synonym:['medium','2','3','mid'], lang:'en'}]},
-              {speed_name:'high', speed_values:[{speed_synonym:['high','4','5','max'], lang:'en'}]}
-            ], ordered:true
-          };
-          attributes.reversible=false;
-        }
-        return {
-          id:d.id,
-          type: googleDeviceType(d),
-          traits,
-          name:{defaultNames:[d.id], name:d.name, nicknames:[d.name]},
-          willReportState: false,
-          attributes,
-          deviceInfo:{manufacturer:'Thavayil Electronics', model:'Thavayil SmartHome v1', hwVersion:'1.0', swVersion:'1.0'}
-        };
-      });
-      return res.json({requestId, payload:{agentUserId:userId, devices}});
+      try{
+        const userDevices=await Device.find({userId});
+        console.log(`GOOGLE SYNC found ${userDevices.length} devices for ${userId}`);
+        const devices=userDevices.map(d=>{
+          try{
+            let traits = googleDeviceTraits(d);
+            let attributes = {};
+            if(d.type==='LIGHT'){ attributes.colorModel='hsv'; }
+            if(d.type==='FAN'){
+              attributes.availableFanSpeeds={
+                speeds:[
+                  {speed_name:'low', speed_values:[{speed_synonym:['low','1','slow'], lang:'en'}]},
+                  {speed_name:'medium', speed_values:[{speed_synonym:['medium','2','3','mid'], lang:'en'}]},
+                  {speed_name:'high', speed_values:[{speed_synonym:['high','4','5','max'], lang:'en'}]}
+                ], ordered:true
+              };
+              attributes.reversible=false;
+            }
+            return {
+              id:(d.id||d.deviceId||'unknown').toString(),
+              type: googleDeviceType(d),
+              traits,
+              name:{defaultNames:[(d.id||'device')], name:(d.name||'Smart Device'), nicknames:[(d.name||'Smart Device')]},
+              willReportState: false,
+              attributes,
+              deviceInfo:{manufacturer:'Thavayil Electronics', model:'Thavayil SmartHome v1', hwVersion:'1.0', swVersion:'1.0'}
+            };
+          }catch(e){
+            console.log('GOOGLE SYNC device map error', d?.id, e.message);
+            return null;
+          }
+        }).filter(Boolean);
+        console.log('GOOGLE SYNC returning', devices.length, 'devices');
+        return res.json({requestId, payload:{agentUserId:userId, devices}});
+      }catch(e){
+        console.log('GOOGLE SYNC ERROR', e.message, e.stack);
+        return res.json({requestId, payload:{agentUserId:userId, devices:[]}});
+      }
     }
 
                     console.log('V17 QUERY intent user', userId);
@@ -590,6 +612,16 @@ app.get('/test/offline', async (req,res)=>{
     res.json({offlineDevices: merged, db: dbList, memory: memList, source:'V12 DB collection'});
   }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices), error:e.message}); }
 });
+
+app.get('/test/google-sync/:userId', async (req,res)=>{
+  try{
+    const userId = req.params.userId;
+    const userDevices=await Device.find({userId});
+    res.json({userId, count:userDevices.length, devices:userDevices.map(d=>({id:d.id, name:d.name, type:d.type}))});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+
 app.get('/test/offline/clear', async (req,res)=>{
   try{
     await OfflineState.deleteMany({});
