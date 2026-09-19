@@ -114,8 +114,13 @@ async function sendGoogleReportState(userId, dev){
       if(dev.brightness!==undefined) state.brightness = dev.brightness;
       if(dev.color){
         const hue = dev.color.hue || 0;
-        const sat = dev.color.saturation !== undefined ? (dev.color.saturation>1? dev.color.saturation/100 : dev.color.saturation) : 0;
-        const val = dev.color.brightness !== undefined ? dev.color.brightness/100 : (dev.color.value!==undefined? dev.color.value : 1);
+        let sat = dev.color.saturation;
+        if(sat!==undefined && sat>1) sat = sat/100;
+        if(sat===undefined) sat = 0;
+        let val = 1;
+        if(dev.color.brightness!==undefined) val = dev.color.brightness/100;
+        else if(dev.color.value!==undefined) val = dev.color.value>1? dev.color.value/100 : dev.color.value;
+        // V19: ONLY spectrumHsv, NEVER include spectrumRgb together
         state.color = { spectrumHsv:{hue: hue, saturation: sat, value: val } };
       } else {
         state.color = { spectrumHsv:{hue:0, saturation:0, value:1} };
