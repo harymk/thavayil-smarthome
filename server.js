@@ -6,7 +6,7 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const app = express();
-const SERVER_VER='V32_OAUTH_RGB_FIX'; console.log('*** VERSION',SERVER_VER,'***');
+const SERVER_VER='V33_SYNC_OAUTH_FIX'; console.log('*** VERSION',SERVER_VER,'***');
 app.get('/test/version',(req,res)=> res.json({version:SERVER_VER}));
 app.get('/test/oauth',(req,res)=> res.json({version:SERVER_VER, ok:true}));
 const server = http.createServer(app);
@@ -212,38 +212,22 @@ app.post('/auth/login', async (req,res)=>{
 });
 
 app.get('/oauth/authorize',(req,res)=>{
-  try{
-    const {redirect_uri,state,client_id,response_type}=req.query;
-    console.log('OAUTH AUTHORIZE GET:', {redirect_uri, state, client_id, response_type});
-    if(!redirect_uri){
-      return res.status(400).send('Missing redirect_uri');
-    }
-    res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link your account to ${client_id||'Google'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${encodeURIComponent(state||'')}&client_id=${encodeURIComponent(client_id||'')}"><input name="email" placeholder="Email" required><input name="password" type="password" placeholder="Password" required><button type="submit">Link Account</button></form></div></body></html>`);
-  }catch(e){ console.log('AUTH GET ERROR', e.message); res.status(500).send(e.message); }
+  const {redirect_uri,state,client_id}=req.query;
+  res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link your account to ${client_id?.includes('google')?'Google Home':'Alexa'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button type="submit">Link Account</button></form></div></body></html>`);
 });
 app.post('/oauth/authorize', async (req,res)=>{
   try{
-    const {redirect_uri,state,client_id}=req.query;
-    console.log('OAUTH AUTHORIZE POST:', {redirect_uri, state, email: req.body.email});
-    const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
-    const password = req.body.password || '';
-    if(!email || !password) return res.send('Email and password required <a href="javascript:history.back()">Back</a>');
-    let user = await User.findOne({email, password}) || await User.findOne({email: req.body.email, password});
-    if(!user){
-      console.log('AUTH FAIL: user not found', email);
-      return res.send('Invalid credentials - user not found. Check email/password in your app. <a href="javascript:history.back()">Back</a>');
-    }
-    const code = Math.random().toString(36).substring(2,12) + Math.random().toString(36).substring(2,12);
-    await Code.create({code, userId: user.id, exp: Date.now()+600000});
-    console.log('AUTH CODE created', code, 'for user', user.id, 'redirect to', redirect_uri);
-    const redirectUrl = `${redirect_uri}?code=${code}&state=${state||''}`;
-    console.log('REDIRECTING TO:', redirectUrl);
-    res.redirect(redirectUrl);
-  }catch(e){ console.log('AUTH POST ERROR', e.message, e.stack); res.status(500).send('Error: '+e.message); }
+    const email = req.body.email.toLowerCase().trim();
+    const user=await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
+    if(!user) return res.send('Invalid credentials <a href="javascript:history.back()">Back</a>');
+    const code=Math.random().toString(36).substring(10);
+    await Code.create({code,userId:user.id,exp:Date.now()+600000});
+    res.redirect(`${req.query.redirect_uri}?code=${code}&state=${req.query.state}`);
+  }catch(e){ res.send('Error: '+e.message); }
 });
 app.post('/oauth/token', async (req,res)=>{
   try{
-    console.log('OAUTH TOKEN REQ DEBUG:', req.body.grant_type, req.body.code ? 'has_code' : 'no_code', req.body.refresh_token ? 'has_refresh' : 'no_refresh');
+    console.log('OAUTH TOKEN REQ:', req.body.grant_type, req.body.code ? 'has_code' : 'no_code', req.body.refresh_token ? 'has_refresh' : 'no_refresh');
     let userId = null;
     if(req.body.code){
       const entry=await Code.findOne({code:req.body.code});
