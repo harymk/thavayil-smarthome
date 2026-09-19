@@ -628,12 +628,16 @@ app.post('/google/smarthome', async (req,res)=>{
                 console.log('Converted RGB to HSV', hsv);
               }
               if(hsv){
-                d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1,hsv.saturation)), brightness:Math.round(Math.max(0,Math.min(1,hsv.value))*100)};
-                d.brightness=d.color.brightness;
+                // V40 FIX: Don't auto-adjust brightness when color changes
+                // Keep brightness trait separate from color value
+                const colorBrightness = Math.round(Math.max(0,Math.min(1,hsv.value))*100);
+                d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1,hsv.saturation)), brightness:colorBrightness};
                 d.state='ON';
+                // Only update color, NOT brightness trait - brightness stays as user set it
                 newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}};
-                newState.brightness=d.brightness;
                 newState.on=true;
+                // Don't send brightness in color command, so dashboard brightness slider doesn't jump
+                console.log(`V40 COLOR FIX: hue=${d.color.hue} sat=${d.color.saturation} colorBright=${colorBrightness} keeping device brightness=${d.brightness}`);
               }
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){ d.speed=ex.params.fanSpeed; d.state='ON'; newState.currentFanSpeedSetting=d.speed; newState.on=true; }
@@ -660,7 +664,7 @@ app.post('/smarthome', (req,res)=>{
 });
 
 
-app.get('/test/version', (req,res)=> res.json({version:'V39_COLOR_FINAL', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V40_COLOR_NO_BRIGHTNESS_JUMP', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id||'1875336409';
