@@ -212,18 +212,33 @@ app.post('/auth/login', async (req,res)=>{
 });
 
 app.get('/oauth/authorize',(req,res)=>{
-  const {redirect_uri,state,client_id}=req.query;
-  res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link your account to ${client_id?.includes('google')?'Google Home':'Alexa'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button type="submit">Link Account</button></form></div></body></html>`);
+  const {redirect_uri,state,client_id,response_type}=req.query;
+  console.log('OAUTH AUTHORIZE GET:', {client_id, redirect_uri, state, response_type});
+  if(!redirect_uri){
+    return res.status(400).send('Missing redirect_uri - Google linking misconfigured. Please try again from Google Home app.');
+  }
+  const safeRedirect = encodeURIComponent(redirect_uri);
+  const safeState = encodeURIComponent(state||'');
+  res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link your account to ${client_id?.includes('google')?'Google Home':'Alexa'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${safeRedirect}&state=${safeState}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button type="submit">Link Account</button></form></div></body></html>`);
 });
 app.post('/oauth/authorize', async (req,res)=>{
   try{
+    const redirect_uri = req.query.redirect_uri;
+    const state = req.query.state;
+    console.log('OAUTH AUTHORIZE POST:', {email:req.body.email, redirect_uri, state});
+    if(!redirect_uri) return res.status(400).send('Missing redirect_uri');
     const email = req.body.email.toLowerCase().trim();
-    const user=await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
-    if(!user) return res.send('Invalid credentials <a href="javascript:history.back()">Back</a>');
-    const code=Math.random().toString(36).substring(10);
+    const user=await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password}) || await User.findOne({id:email});
+    if(!user) {
+      console.log('OAUTH AUTHORIZE FAIL: user not found', email);
+      return res.send('Invalid credentials - email or password wrong. Check web dashboard login works.<br><a href="javascript:history.back()">Back</a>');
+    }
+    const code=require('crypto').randomBytes(16).toString('hex');
     await Code.create({code,userId:user.id,exp:Date.now()+600000});
-    res.redirect(`${req.query.redirect_uri}?code=${code}&state=${req.query.state}`);
-  }catch(e){ res.send('Error: '+e.message); }
+    const finalUrl = `${redirect_uri}?code=${code}&state=${state}`;
+    console.log('OAUTH AUTHORIZE OK:', {userId:user.id, finalUrl});
+    res.redirect(finalUrl);
+  }catch(e){ console.log('OAUTH AUTHORIZE ERROR', e); res.send('Error: '+e.message); }
 });
 app.post('/oauth/token', async (req,res)=>{
   try{
