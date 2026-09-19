@@ -436,6 +436,11 @@ app.post('/google/smarthome', async (req,res)=>{
       }
       for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
       console.log('V27 QUERY RETURNING:', JSON.stringify(devicesState).slice(0,600));
+
+      // V30 LOG REAL GOOGLE QUERY
+      console.log('=== GOOGLE QUERY HANDLER V30 ===');
+      console.log('DevicesState BEFORE guard:', JSON.stringify(devicesState).slice(0,1000));
+
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
@@ -545,33 +550,14 @@ app.get('/test/fix-color', async (req,res)=>{
 
 app.get('/test/force-report', async (req,res)=>{
   try{
-    const id = req.query.id || '1875336409';
-    const userId = req.query.userId || '1789741458155';
-    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    if(!dev) return res.status(404).json({error:'device not found'});
-    // Build clean state
+    const id=req.query.id||'1875336409'; const userId=req.query.userId||'1789741458155';
+    const dev=await Device.findOne({id:id})||await Device.findOne({deviceId:id});
     let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
     if(s>1) s=s/100;
-    let state = {online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('FORCE REPORT CLEAN STATE:', JSON.stringify(state));
-    // Force report
-    dev._forceOnline = true;
+    let state={online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('FORCE REPORT CLEAN:', JSON.stringify(state));
     await sendGoogleReportState(userId, dev);
-    // Also send direct via helper
-    try{
-      const { JWT } = require('google-auth-library');
-      const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
-      if(saJson){
-        const sa = JSON.parse(saJson);
-        const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
-        const tokens = await client.authorize();
-        const https = require('https');
-        const body = JSON.stringify({ requestId: 'force-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [id]: state } } } });
-        const req2 = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, r=>{ let d=''; r.on('data',x=>d+=x); r.on('end',()=>{ console.log('FORCE HomeGraph Report', r.statusCode, d.slice(0,300)); }); });
-        req2.write(body); req2.end();
-      }
-    }catch(e){ console.log('force report error', e.message); }
-    res.json({success:true, sentState: state, version: SERVER_VER});
+    res.json({success:true, sentState:state});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
@@ -616,33 +602,14 @@ app.get('/test/fix-color', async (req,res)=>{
 
 app.get('/test/force-report', async (req,res)=>{
   try{
-    const id = req.query.id || '1875336409';
-    const userId = req.query.userId || '1789741458155';
-    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    if(!dev) return res.status(404).json({error:'device not found'});
-    // Build clean state
+    const id=req.query.id||'1875336409'; const userId=req.query.userId||'1789741458155';
+    const dev=await Device.findOne({id:id})||await Device.findOne({deviceId:id});
     let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
     if(s>1) s=s/100;
-    let state = {online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('FORCE REPORT CLEAN STATE:', JSON.stringify(state));
-    // Force report
-    dev._forceOnline = true;
+    let state={online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('FORCE REPORT CLEAN:', JSON.stringify(state));
     await sendGoogleReportState(userId, dev);
-    // Also send direct via helper
-    try{
-      const { JWT } = require('google-auth-library');
-      const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
-      if(saJson){
-        const sa = JSON.parse(saJson);
-        const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
-        const tokens = await client.authorize();
-        const https = require('https');
-        const body = JSON.stringify({ requestId: 'force-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [id]: state } } } });
-        const req2 = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, r=>{ let d=''; r.on('data',x=>d+=x); r.on('end',()=>{ console.log('FORCE HomeGraph Report', r.statusCode, d.slice(0,300)); }); });
-        req2.write(body); req2.end();
-      }
-    }catch(e){ console.log('force report error', e.message); }
-    res.json({success:true, sentState: state, version: SERVER_VER});
+    res.json({success:true, sentState:state});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
@@ -689,33 +656,14 @@ app.get('/test/fix-color', async (req,res)=>{
 
 app.get('/test/force-report', async (req,res)=>{
   try{
-    const id = req.query.id || '1875336409';
-    const userId = req.query.userId || '1789741458155';
-    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    if(!dev) return res.status(404).json({error:'device not found'});
-    // Build clean state
+    const id=req.query.id||'1875336409'; const userId=req.query.userId||'1789741458155';
+    const dev=await Device.findOne({id:id})||await Device.findOne({deviceId:id});
     let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
     if(s>1) s=s/100;
-    let state = {online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('FORCE REPORT CLEAN STATE:', JSON.stringify(state));
-    // Force report
-    dev._forceOnline = true;
+    let state={online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('FORCE REPORT CLEAN:', JSON.stringify(state));
     await sendGoogleReportState(userId, dev);
-    // Also send direct via helper
-    try{
-      const { JWT } = require('google-auth-library');
-      const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
-      if(saJson){
-        const sa = JSON.parse(saJson);
-        const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
-        const tokens = await client.authorize();
-        const https = require('https');
-        const body = JSON.stringify({ requestId: 'force-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [id]: state } } } });
-        const req2 = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, r=>{ let d=''; r.on('data',x=>d+=x); r.on('end',()=>{ console.log('FORCE HomeGraph Report', r.statusCode, d.slice(0,300)); }); });
-        req2.write(body); req2.end();
-      }
-    }catch(e){ console.log('force report error', e.message); }
-    res.json({success:true, sentState: state, version: SERVER_VER});
+    res.json({success:true, sentState:state});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
@@ -839,6 +787,11 @@ app.post('/google', async (req,res)=>{
       }
       for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
       console.log('V27 QUERY RETURNING:', JSON.stringify(devicesState).slice(0,600));
+
+      // V30 LOG REAL GOOGLE QUERY
+      console.log('=== GOOGLE QUERY HANDLER V30 ===');
+      console.log('DevicesState BEFORE guard:', JSON.stringify(devicesState).slice(0,1000));
+
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
