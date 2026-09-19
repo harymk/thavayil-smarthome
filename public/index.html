@@ -128,35 +128,18 @@ function loadDevices(){
   .catch(function(err){ console.error(err); });
 }
 function loadOfflineStatus(){
-  fetch(API+'/test/offline')
+  fetch(API+'/test/offline',{headers:{Authorization:'Bearer '+(localStorage.getItem('token')||'')}})
   .then(function(r){return r.json();}).then(function(d){
     offlineSet={}; var list=d.offlineDevices||[]; for(var i=0;i<list.length;i++){ offlineSet[list[i]]=true; }
-    console.log('Offline status', offlineSet);
     render();
-  }).catch(function(e){ console.log('offline fetch fail', e); });
+  }).catch(function(){});
 }
 function toggleOnlineStatus(id){
   var isOffline = offlineSet[id];
   var newOnline = isOffline ? true : false;
-  // Optimistic update
-  if(newOnline){ delete offlineSet[id]; } else { offlineSet[id]=true; }
-  render();
-  showToast((newOnline?'Setting ONLINE...':'Setting OFFLINE...')+' '+id);
   fetch(API+'/test/offline',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(localStorage.getItem('token')||'')},body:JSON.stringify({deviceId:id, online:newOnline})})
   .then(function(r){return r.json();}).then(function(res){
-    showToast(id + (newOnline?' ONLINE':' OFFLINE')+' - DB Saved');
-    loadOfflineStatus();
-  }).catch(function(e){
-    showToast('Failed: '+e);
-    loadOfflineStatus();
-  });
-}
-function makeAllOnline(){
-  /* old clear */ fetch(API+'/test/offline/clear',{headers:{Authorization:'Bearer '+(localStorage.getItem('token')||'')}})
-  .then(function(r){return r.json();}).then(function(){
-    offlineSet={};
-    render();
-    showToast('ALL ONLINE - Cleared DB');
+    showToast(id + (newOnline?' ONLINE':' OFFLINE'));
     loadOfflineStatus();
   });
 }
@@ -168,14 +151,12 @@ function render(){
     var d=devices[i];
     var col=d.color;
     var hex=col?hsbToHex(col.hue,col.saturation,col.brightness||100):'#ffffff';
-    var isLight=d.displayCategory==='LIGHT'; var isFan=d.displayCategory==='FAN'; var isSwitch=d.displayCategory==='SWITCH';
+    var isLight=d.displayCategory==='LIGHT'; var isFan=d.displayCategory==='FAN';
     var hsbBri = col && col.brightness? col.brightness : 100;
     var isOffline = offlineSet[d.id];
-    var iconSvg = isLight ? '💡' : isFan ? '🌀' : '🔌';
-    var iconBg = d.state==='ON' ? (isLight?'rgba(250,204,21,0.18)': isFan?'rgba(56,189,248,0.18)':'rgba(16,185,129,0.18)') : 'rgba(255,255,255,0.06)';
     out+='<div class="card-inner" style="padding:16px;border:1px solid '+(isOffline?'rgba(239,68,68,0.4)':(d.state==='ON'?'rgba(16,185,129,0.3)':'rgba(255,255,255,0.07)'))+'">';
-    out+='<div style="margin-bottom:12px"><button onclick="toggleOnlineStatus(\''+d.id+'\')" style="width:100%;height:34px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.5px;cursor:pointer;border:1px solid '+(isOffline?'rgba(239,68,68,0.4)':'rgba(16,185,129,0.4)')+';background:'+(isOffline?'rgba(239,68,68,0.12)':'rgba(16,185,129,0.12)')+';color:'+(isOffline?'#ef4444':'#10b981')+'">'+(isOffline?'● OFFLINE - Click to set ONLINE':'● ONLINE - Click to set OFFLINE')+'</button></div>';
-    out+='<div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;gap:12px;align-items:flex-start"><div style="width:44px;height:44px;min-width:44px;border-radius:14px;background:'+iconBg+';display:flex;align-items:center;justify-content:center;font-size:22px;border:1px solid '+(d.state==='ON'?'rgba(255,255,255,0.1)':'transparent')+'">'+iconSvg+'</div><div style="min-width:0"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><div style="font-size:14px;font-weight:600;white-space:nowrap">'+d.name+'</div><button onclick="openRenameModal(\''+d.id+'\')" style="background:rgba(255,255,255,0.08);border:0;border-radius:6px;padding:3px 7px;color:#a1a1aa;cursor:pointer;font-size:10px">Rename</button></div><div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap"><span style="font-size:9px;padding:3px 7px;border-radius:20px;background:'+(d.state==='ON'?'rgba(16,185,129,0.18)':'rgba(255,255,255,0.08)')+';color:'+(d.state==='ON'?'#10b981':'#71717a')+';border:1px solid '+(d.state==='ON'?'rgba(16,185,129,0.25)':'transparent')+'">'+d.displayCategory+' • '+d.state+'</span><div class="mono" style="font-size:11px;color:#10b981;letter-spacing:1px">'+d.id+'</div><button onclick="copyDeviceId(\''+d.id+'\')" style="background:rgba(255,255,255,0.08);border:0;border-radius:4px;padding:2px 6px;color:#fff;cursor:pointer;font-size:9px">Copy</button></div></div></div><button onclick="openDeleteModal(\''+d.id+'\')" style="width:30px;height:30px;min-width:30px;border-radius:50%;background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.15);color:#ef4444;cursor:pointer;font-weight:600">×</button></div>';
+    out+='<div style="margin-bottom:10px"><button onclick="toggleOnlineStatus(\''+d.id+'\')" style="width:100%;height:36px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid '+(isOffline?'rgba(239,68,68,0.4)':'rgba(16,185,129,0.4)')+';background:'+(isOffline?'rgba(239,68,68,0.15)':'rgba(16,185,129,0.15)')+';color:'+(isOffline?'#ef4444':'#10b981')+'">'+(isOffline?'OFFLINE - Click to set ONLINE':'ONLINE - Click to set OFFLINE')+'</button></div>';
+    out+='<div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:10px;align-items:center"><div style="width:40px;height:40px;border-radius:12px;background:'+(d.state==='ON'?'rgba(16,185,129,0.15)':'rgba(255,255,255,0.06)')+';display:flex;align-items:center;justify-content:center;font-size:18px">'+(isLight?'LIGHT':isFan?'FAN':'SWITCH')+'</div><div><div style="display:flex;align-items:center;gap:6px"><div style="font-size:13px;font-weight:600">'+d.name+'</div><button onclick="openRenameModal(\''+d.id+'\')" style="background:rgba(255,255,255,0.08);border:0;border-radius:6px;padding:2px 6px;color:#a1a1aa;cursor:pointer;font-size:10px">Rename</button><span style="font-size:9px;padding:2px 6px;border-radius:10px;background:'+(d.state==='ON'?'rgba(16,185,129,0.2)':'rgba(255,255,255,0.1)')+'">'+d.displayCategory+' - '+d.state+'</span></div><div style="display:flex;align-items:center;gap:6px;margin-top:2px"><div class="mono" style="font-size:11px;color:#10b981;letter-spacing:1px">'+d.id+'</div><button onclick="copyDeviceId(\''+d.id+'\')" style="background:rgba(255,255,255,0.08);border:0;border-radius:4px;padding:1px 5px;color:#fff;cursor:pointer;font-size:9px">Copy</button></div></div></div><button onclick="openDeleteModal(\''+d.id+'\')" style="width:28px;height:28px;border-radius:50%;background:rgba(239,68,68,0.12);border:0;color:#ef4444;cursor:pointer">x</button></div>';
     out+='<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.4);padding:12px 14px;border-radius:12px"><div><div style="font-size:10px;color:#71717a">ON / OFF</div><div style="font-size:13px;font-weight:700;margin-top:2px">'+d.state+'</div></div><div class="toggle '+(d.state==='ON'?'on':'')+'" onclick="toggleDevice(\''+d.id+'\')"><div class="toggle-dot"></div></div></div>';
     if(isLight){
       out+='<div style="margin-top:12px;background:rgba(0,0,0,0.3);padding:12px;border-radius:12px"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
@@ -218,7 +199,7 @@ function closeDeleteModal(){ document.getElementById('deleteModal').style.displa
 function confirmDelete(){ if(!pendingDeleteId) return; token=localStorage.getItem('token')||token; fetch(API+'/api/devices/'+pendingDeleteId,{method:'DELETE',headers:{Authorization:'Bearer '+token}}).then(function(){ closeDeleteModal(); showToast('Deleted'); }); }
 function addDevice(){ token=localStorage.getItem('token')||token; var name=document.getElementById('devName').value.trim(); var type=document.getElementById('devType').value; var id=curDevId||gen10Digit(); if(!name){showToast('Enter device name');return;} if(!/^\d{10}$/.test(id)){showToast('ID must be 10 digit'); genId(); return;} var body={name:name,type:type,id:id,deviceId:id}; if(type==='LIGHT'){ var hsb=hexToHsb(curColor); body.color={hue:hsb.hue,saturation:hsb.saturation,brightness:hsb.brightness}; body.brightness=curBright; } else if(type==='FAN'){ body.speed=curSpeed; } fetch(API+'/api/devices',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)}).then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); }).then(function(res){ if(!res.ok){ showToast(res.data.error); return; } showToast('Added '+name); genId(); document.getElementById('devName').value=''; }).catch(function(err){ showToast(err.message); }); }
 function toggleDevice(id){ token=localStorage.getItem('token')||token; var d=null; for(var i=0;i<devices.length;i++){ if(devices[i].id===id){ d=devices[i]; break; } } if(!d) return; var ns=d.state==='ON'?'OFF':'ON'; fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:d.id,action:ns==='ON'?'TurnOn':'TurnOff'})}); }
-function changeColor(id, hex){ token=localStorage.getItem('token')||token; var hsb=hexToHsb(hex); fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:id,action:'SetColor',color:{hue:hsb.hue,saturation:hsb.saturation,brightness:hsb.brightness}})}); }
+function changeColor(id, hex){ token=localStorage.getItem('token')||token; var hsb=hexToHsb(hex); fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:id,action:'SetColor',color:{hue:hsb.hue,saturation:hsb.saturation}})}); }
 function changeBright(id, b){ token=localStorage.getItem('token')||token; fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:id,action:'SetBrightness',brightness:parseInt(b)})}); }
 function changeSpeed(id, s){ token=localStorage.getItem('token')||token; fetch(API+'/api/device/control',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({deviceId:id,action:'SetSpeed',speed:parseInt(s)})}); }
 if(localStorage.getItem('token')){ token=localStorage.getItem('token'); var em=document.getElementById('userEmail'); if(em) em.textContent=localStorage.getItem('email')||''; var sb=document.getElementById('signoutBtn'); if(sb) sb.style.display='block'; initDash(); }
