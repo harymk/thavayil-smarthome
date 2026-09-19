@@ -40,6 +40,14 @@ const User = mongoose.model('User', UserSchema);
 const Code = mongoose.model('Code', CodeSchema);
 const Device = mongoose.model('Device', DeviceSchema);
 
+const OfflineSchema = new mongoose.Schema({
+  deviceId: {type:String, unique:true},
+  offline: {type:Boolean, default:false},
+  updatedAt: {type:Date, default: Date.now}
+}, {strict:false});
+const OfflineState = mongoose.model('OfflineState', OfflineSchema);
+
+
 function verifyToken(t){
   try{ return jwt.verify(t, JWT_SECRET_NEW); }
   catch(e){ return jwt.verify(t, JWT_SECRET_OLD); }
@@ -340,13 +348,15 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                if(intent==='action.devices.QUERY'){
+                    if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
-      // Preload DB offline list
       let dbOfflineIds = [];
-      try{ const offDevs = await Device.find({offline:true}); dbOfflineIds = offDevs.map(d=>d.id); }catch(e){}
+      try{
+        const offStates = await OfflineState.find({offline:true});
+        dbOfflineIds = offStates.map(s=>s.deviceId);
+      }catch(e){ console.log('query offline fetch error', e.message); }
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         let isOffline = false;
@@ -371,7 +381,7 @@ app.post('/google/smarthome', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V11 MERGED', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices), result:devicesState}));
+      console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
@@ -455,25 +465,27 @@ server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} 
 
 
 
+
 global.offlineDevices = global.offlineDevices || new Set();
 global.qCount = global.qCount || {};
 
 app.get('/test/offline', async (req,res)=>{
   try{
-    let dbList=[];
-    try{ const devs = await Device.find({offline:true}); dbList = devs.map(d=>d.id||d.deviceId); }catch(e){}
+    const dbStates = await OfflineState.find({offline:true});
+    const dbList = dbStates.map(d=>d.deviceId);
     const memList = Array.from(global.offlineDevices);
     const merged = [...new Set([...dbList, ...memList])];
-    res.json({offlineDevices: merged, db: dbList, memory: memList});
-  }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices)}); }
+    res.json({offlineDevices: merged, db: dbList, memory: memList, source:'V12 DB collection'});
+  }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices), error:e.message}); }
 });
 app.get('/test/offline/clear', async (req,res)=>{
   try{
+    await OfflineState.deleteMany({});
     await Device.updateMany({}, {$set:{offline:false}});
-  }catch(e){}
+  }catch(e){ console.log('clear error', e.message); }
   global.offlineDevices = new Set();
   global.qCount = {};
-  console.log('CLEARED ALL OFFLINE');
+  console.log('V12 CLEARED ALL');
   res.json({success:true, cleared:true, offlineDevices:[]});
 });
 app.get('/test/offline/set', async (req,res)=>{
@@ -482,16 +494,19 @@ app.get('/test/offline/set', async (req,res)=>{
     const onlineParam = req.query.online;
     if(!id) return res.status(400).json({error:'id required'});
     const isOnline = (onlineParam==='true' || onlineParam==='1');
-    // Always update memory
-    if(!isOnline) global.offlineDevices.add(id); else global.offlineDevices.delete(id);
-    // Try DB
+    const isOffline = !isOnline;
+    // Memory
+    if(isOffline) global.offlineDevices.add(id); else global.offlineDevices.delete(id);
+    // DB collection - upsert
     try{
+      await OfflineState.findOneAndUpdate({deviceId:id}, {deviceId:id, offline:isOffline, updatedAt:new Date()}, {upsert:true, new:true});
+      // Also try Device
       const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-      if(dev){ dev.offline = !isOnline; await dev.save(); console.log('DB updated', id, 'offline=', !isOnline); }
-      else { console.log('Device not found in DB for offline set', id, 'but memory updated'); }
-    }catch(e){ console.log('DB error', e.message); }
+      if(dev){ dev.offline = isOffline; await dev.save(); }
+      console.log('V12 SET', id, 'offline=', isOffline);
+    }catch(e){ console.log('V12 set DB error', e.message); }
     global.qCount[id]=0;
-    res.json({success:true, device:id, online:isOnline, offline:!isOnline, memory:Array.from(global.offlineDevices)});
+    res.json({success:true, device:id, online:isOnline, offline:isOffline});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 app.post('/test/offline', async (req,res)=>{
@@ -499,24 +514,19 @@ app.post('/test/offline', async (req,res)=>{
     const {deviceId, online} = req.body || {};
     if(!deviceId) return res.status(400).json({error:'deviceId required'});
     const isOnline = (online===true || online==='true');
-    // Always memory
-    if(!isOnline) global.offlineDevices.add(deviceId); else global.offlineDevices.delete(deviceId);
+    const isOffline = !isOnline;
+    if(isOffline) global.offlineDevices.add(deviceId); else global.offlineDevices.delete(deviceId);
     global.qCount[deviceId]=0;
-    // Try DB, but don't fail if not found
     try{
+      await OfflineState.findOneAndUpdate({deviceId:deviceId}, {deviceId:deviceId, offline:isOffline, updatedAt:new Date()}, {upsert:true, new:true});
       const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
-      if(dev){
-        dev.offline = !isOnline;
-        await dev.save();
-        if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev);
-        console.log('POST DB saved', deviceId, 'offline=', !isOnline);
-      } else {
-        console.log('POST Device not found', deviceId, 'keeping in memory only');
-      }
-    }catch(e){ console.log('POST DB error', e.message); }
-    res.json({success:true, device:deviceId, online:isOnline, offline:!isOnline, memory:Array.from(global.offlineDevices)});
+      if(dev){ dev.offline = isOffline; await dev.save(); if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev); }
+      console.log('V12 POST', deviceId, 'offline=', isOffline);
+    }catch(e){ console.log('V12 post error', e.message); }
+    res.json({success:true, device:deviceId, online:isOnline, offline:isOffline});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
+
 
 
 
@@ -547,13 +557,15 @@ app.post('/google', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                if(intent==='action.devices.QUERY'){
+                    if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
-      // Preload DB offline list
       let dbOfflineIds = [];
-      try{ const offDevs = await Device.find({offline:true}); dbOfflineIds = offDevs.map(d=>d.id); }catch(e){}
+      try{
+        const offStates = await OfflineState.find({offline:true});
+        dbOfflineIds = offStates.map(s=>s.deviceId);
+      }catch(e){ console.log('query offline fetch error', e.message); }
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         let isOffline = false;
@@ -578,7 +590,7 @@ app.post('/google', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V11 MERGED', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices), result:devicesState}));
+      console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
