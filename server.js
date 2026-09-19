@@ -517,121 +517,106 @@ io.on('connection', async (socket)=>{
 
 const PORT=process.env.PORT||10000;
 
-// V34: Alias all possible fulfillment paths to same handler
-async function handleGoogleSmarthome(req,res){
+
+
+app.get('/test/report-both', async (req,res)=>{
+  try{
+    const id=req.query.id||'1875336409';
+    const userId='1789741458155';
+    const dev=await Device.findOne({id:id});
+    if(!dev) return res.status(404).json({error:'not found'});
+    // Force ON
+    dev.state='ON';
+    dev.brightness=100;
+    await dev.save();
+    await sendGoogleReportState(userId, dev);
+    // Also try Alexa
+    try{ await sendAlexaReportState(userId, dev); }catch(e){ console.log('Alexa report failed', e.message); }
+    res.json({ok:true, sent: {id, state: dev.state}});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+
+// V37 OVERRIDE: Force ALL fulfillment paths to use fixed handler with online:true
+app.post('/google/smarthome', async (req,res)=>{
+  // Reuse handleGoogleSmarthome logic inline to ensure latest
   try{
     const auth=req.headers.authorization;
-    if(!auth) { console.log('SMARTHOME NO AUTH'); return res.status(401).json({error:'no auth'}); }
+    if(!auth) return res.status(401).json({error:'no auth'});
     const token=auth.replace('Bearer ','');
-    let decoded;
-    try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_NEW); }catch(e){ try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_OLD); }catch(e2){ decoded=require('jsonwebtoken').decode(token); } }
+    let decoded; try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_NEW); }catch(e){ try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_OLD); }catch(e2){ decoded=require('jsonwebtoken').decode(token); } }
     const userId = decoded?.userId || token;
     const requestId = req.body.requestId;
     const input = req.body.inputs?.[0];
     const intent = input?.intent;
-    console.log(`=== GOOGLE ${intent} for user ${userId} ===`);
-    console.log('RequestId:', requestId, 'Input:', JSON.stringify(input).slice(0,500));
+    console.log(`=== GOOGLE V37 ${intent} user ${userId} ===`);
 
     if(intent==='action.devices.SYNC'){
       const userDevices=await Device.find({userId});
-      console.log('SYNC found devices:', userDevices.length);
+      console.log('V37 SYNC found', userDevices.length);
       const devices=userDevices.map(d=>{
-        let traits=[];
-        let type='action.devices.types.SWITCH';
-        let attrs={};
+        let traits=[]; let type='action.devices.types.SWITCH'; let attrs={};
         if(d.type==='LIGHT'){ traits=['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting']; type='action.devices.types.LIGHT'; attrs={colorModel:'hsv', colorTemperatureRange:{temperatureMinK:2000, temperatureMaxK:9000}}; }
         else if(d.type==='FAN'){ traits=['action.devices.traits.OnOff','action.devices.traits.FanSpeed']; type='action.devices.types.FAN'; attrs={availableFanSpeeds:{speeds:[{speed_name:'low',speed_values:[{speed_synonym:['low'],lang:'en'}]},{speed_name:'medium',speed_values:[{speed_synonym:['medium'],lang:'en'}]},{speed_name:'high',speed_values:[{speed_synonym:['high'],lang:'en'}]}],ordered:true}}; }
-        else { traits=['action.devices.traits.OnOff']; }
-        return {id: d.id, type, traits, name:{name: d.name||d.id, defaultNames:[d.name||d.id], nicknames:[d.name||d.id]}, willReportState:true, attributes:attrs, deviceInfo:{manufacturer:'Thavayil', model:'v1', hwVersion:'1', swVersion:'1'}};
+        else traits=['action.devices.traits.OnOff'];
+        return {id:d.id, type, traits, name:{name:d.name||d.id, defaultNames:[d.name||d.id], nicknames:[d.name||d.id]}, willReportState:true, attributes:attrs, deviceInfo:{manufacturer:'Thavayil', model:'v1', hwVersion:'1', swVersion:'1'}};
       });
-      console.log('SYNC RETURNING:', devices.length, JSON.stringify(devices).slice(0,1500));
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
     if(intent==='action.devices.QUERY'){
       const devicesState={};
       const userDevices=await Device.find({userId});
       for(let d of userDevices){
-        let state={online:true, on: d.state==='ON', status:'SUCCESS'};
-        if(d.type==='FAN'){ state.currentFanSpeedSetting = d.speed||'low'; }
+        let state={online:true, status:'SUCCESS', on: d.state==='ON'};
         if(d.type==='LIGHT'){
-          const bri = d.brightness!==undefined ? d.brightness : 100;
+          const bri=d.brightness!==undefined?d.brightness:100;
           let h=0,s=0,v=1;
           if(d.color){ if(d.color.hue!==undefined) h=d.color.hue; if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; } if(d.color.brightness!==undefined) v=d.color.brightness/100; }
-          state.brightness = bri;
-          state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
+          state.brightness=bri;
+          state.color={ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
         }
-        if(d.type!=='LIGHT') state.on = d.state==='ON';
-        // Guard: ensure only Hsv
-        if(state.color && state.color.spectrumHsv){
-          let hsv=state.color.spectrumHsv;
-          state.color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } };
-        }
+        if(d.type==='FAN'){ state.currentFanSpeedSetting=d.speed||'low'; }
         devicesState[d.id]=state;
       }
-      console.log('QUERY RETURNING:', JSON.stringify(devicesState).slice(0,1000));
+      console.log('V37 QUERY', JSON.stringify(devicesState).slice(0,800));
       return res.json({requestId, payload:{devices:devicesState}});
     }
     if(intent==='action.devices.EXECUTE'){
-      const commands = input.payload.commands;
+      const commands=input.payload.commands;
       const results=[];
       for(let cmd of commands){
         for(let devInfo of cmd.devices){
           const id=devInfo.id;
           const d=await Device.findOne({id:id, userId:userId}) || await Device.findOne({id:id});
-          if(!d){ console.log('EXECUTE device not found', id); continue; }
-          console.log('EXECUTE for device', id, 'cmds', JSON.stringify(cmd.execution));
+          if(!d) continue;
+          console.log('V37 EXECUTE', id, JSON.stringify(cmd.execution));
           let newState={online:true};
           for(let ex of cmd.execution){
-            if(ex.command==='action.devices.commands.OnOff'){
-              d.state=ex.params.on?'ON':'OFF';
-              newState.on=ex.params.on;
-            }
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){
-              d.brightness=ex.params.brightness;
-              d.state='ON';
-              newState.brightness=ex.params.brightness;
-              newState.on=true;
-            }
-            if(ex.command==='action.devices.commands.ColorAbsolute'){
-              if(ex.params.color?.spectrumHSV){
-                const hsv=ex.params.color.spectrumHSV;
-                d.color={hue:Math.round(hsv.hue), saturation:hsv.saturation, brightness:Math.round(hsv.value*100)};
-                d.brightness=d.color.brightness;
-                d.state='ON';
-                newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}};
-                newState.on=true;
-                newState.brightness=d.brightness;
-              }
-            }
-            if(ex.command==='action.devices.commands.SetFanSpeed'){
-              d.speed=ex.params.fanSpeed;
-              d.state='ON';
-              newState.currentFanSpeedSetting=d.speed;
-              newState.on=true;
-            }
+            if(ex.command==='action.devices.commands.OnOff'){ d.state=ex.params.on?'ON':'OFF'; newState.on=ex.params.on; }
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ d.brightness=ex.params.brightness; d.state='ON'; newState.brightness=ex.params.brightness; newState.on=true; }
+            if(ex.command==='action.devices.commands.ColorAbsolute' && ex.params.color?.spectrumHSV){ const hsv=ex.params.color.spectrumHSV; d.color={hue:Math.round(hsv.hue), saturation:hsv.saturation, brightness:Math.round(hsv.value*100)}; d.brightness=d.color.brightness; d.state='ON'; newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}}; newState.brightness=d.brightness; newState.on=true; }
+            if(ex.command==='action.devices.commands.SetFanSpeed'){ d.speed=ex.params.fanSpeed; d.state='ON'; newState.currentFanSpeedSetting=d.speed; newState.on=true; }
           }
           await d.save();
-          console.log('EXECUTE saved device', id, 'state', d.state, 'newState', JSON.stringify(newState));
-          // Send ReportState to HomeGraph for real-time update
-          try{
-            await sendGoogleReportState(userId, d);
-            console.log('ReportState sent for', id);
-          }catch(e){ console.log('ReportState failed', e.message); }
+          // Ensure return full state like QUERY
+          if(d.type==='LIGHT' && !newState.brightness) newState.brightness=d.brightness||100;
+          if(d.type==='LIGHT' && !newState.color && d.color){ let h=d.color.hue||0,s=d.color.saturation||0,v=(d.color.brightness||100)/100; if(s>1) s/=100; newState.color={spectrumHsv:{hue:Math.round(h)%360, saturation:s, value:v}}; }
+          console.log('V37 EXECUTE RETURN', id, JSON.stringify(newState));
+          try{ await sendGoogleReportState(userId, d); }catch(e){ console.log('Report fail', e.message); }
           results.push({ids:[id], status:'SUCCESS', states:newState});
         }
       }
-      console.log('EXECUTE RETURNING', JSON.stringify(results).slice(0,1000));
+      console.log('V37 EXECUTE FINAL', JSON.stringify(results).slice(0,1000));
       return res.json({requestId, payload:{commands:results}});
     }
-  }catch(e){ console.log('SMARTHOME ERROR', e.message, e.stack); res.status(500).json({error:e.message}); }
-}
-app.post('/smarthome', handleGoogleSmarthome);
-app.post('/fulfillment', handleGoogleSmarthome);
-app.post('/google-home', handleGoogleSmarthome);
+  }catch(e){ console.log('V37 ERROR', e.message, e.stack); res.status(500).json({error:e.message}); }
+});
 
-const SERVER_VER='V35_EXECUTE_FIX';
-console.log('*** VERSION', SERVER_VER, '***');
-app.get('/test/version',(req,res)=> res.json({version:SERVER_VER, paths:['/smarthome','/google/smarthome','/fulfillment']}));
+app.post('/smarthome', (req,res)=>{ 
+  // Forward to same logic by reusing the above handler
+  req.url='/google/smarthome'; 
+  app._router.handle(req,res);
+});
 
 server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
 
