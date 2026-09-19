@@ -530,6 +530,72 @@ app.get('/test/offline', async (req,res)=>{
     res.json({offlineDevices: merged, db: dbList, memory: memList, source:'V12 DB collection'});
   }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices), error:e.message}); }
 });
+
+app.get('/test/fix-color', async (req,res)=>{
+  try{
+    const id = req.query.id;
+    let filter = {};
+    if(id) filter = {id:id};
+    else filter = {type:'LIGHT'};
+    const devices = await Device.find(filter);
+    let fixed = [];
+    for(let dev of devices){
+      try{
+        if(dev.color){
+          // Remove spectrumRgb field if exists at top level or nested
+          if(dev.color.spectrumRgb!==undefined){
+            delete dev.color.spectrumRgb;
+            dev.markModified('color');
+          }
+          // If color has spectrumHsv.spectrumRgb or similar
+          if(dev.color.color && dev.color.color.spectrumRgb){
+            delete dev.color.color.spectrumRgb;
+            dev.markModified('color');
+          }
+          // Ensure color is clean object with only hue, saturation, brightness/value
+          let clean = {};
+          if(dev.color.hue!==undefined) clean.hue = dev.color.hue;
+          if(dev.color.saturation!==undefined) clean.saturation = dev.color.saturation>1? dev.color.saturation/100 : dev.color.saturation;
+          if(dev.color.brightness!==undefined) clean.brightness = dev.color.brightness;
+          else if(dev.color.value!==undefined) clean.value = dev.color.value>1? dev.color.value/100 : dev.color.value;
+          else clean.brightness = 100;
+          // Preserve hue if missing
+          if(clean.hue===undefined) clean.hue = 0;
+          if(clean.saturation===undefined) clean.saturation = 0;
+          dev.color = clean;
+          dev.markModified('color');
+          await dev.save();
+          fixed.push({id: dev.id, color: dev.color});
+          // Force report with clean color
+          dev._forceOnline = true;
+          await sendGoogleReportState(dev.userId, dev);
+        }
+      }catch(e){ console.log('fix err', dev.id, e.message); }
+    }
+    res.json({success:true, fixed:fixed, message: 'Removed spectrumRgb, now only spectrumHsv will be sent'});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+app.get('/test/query', async (req,res)=>{
+  try{
+    const id = req.query.id;
+    if(!id) return res.status(400).json({error:'id required'});
+    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
+    if(!dev) return res.status(404).json({error:'not found'});
+    let state = { online: true, on: dev.state==='ON' };
+    if(dev.brightness!==undefined) state.brightness = dev.brightness;
+    if(dev.type==='LIGHT'){
+      let h = dev.color?.hue||0;
+      let s = dev.color?.saturation||0;
+      if(s>1) s=s/100;
+      let v = dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
+      state.color = {spectrumHsv:{hue:h, saturation:s, value:v}};
+    }
+    res.json({deviceId:id, queryState: state, rawColor: dev.color});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+
 app.get('/test/offline/clear', async (req,res)=>{
   try{
     await OfflineState.deleteMany({});
