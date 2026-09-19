@@ -6,8 +6,6 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const app = express();
-const SERVER_VER='V27_ZERO_RGB';
-console.log('*** VERSION',SERVER_VER,'***');
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
@@ -112,15 +110,9 @@ async function sendGoogleReportState(userId, dev){
       const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
       state.currentFanSpeedSetting = map[dev.speed] || 'medium';
     }
-        if(dev.type==='LIGHT'){
+    if(dev.type==='LIGHT'){
       if(dev.brightness!==undefined) state.brightness = dev.brightness;
-      let h=0,s=0,v=1;
-      if(dev.color){
-        if(dev.color.hue!==undefined) h=dev.color.hue;
-        if(dev.color.saturation!==undefined){ s=dev.color.saturation; if(s>1) s=s/100; }
-        if(dev.color.brightness!==undefined) v=dev.color.brightness/100;
-      }
-      state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
+      if(dev.color) state.color = { spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:(dev.color.brightness||100)/100 }};
     }
     lastReportedState[userId][dev.id] = {...state, ts: Date.now() };
     console.log(`ReportState (local) ${dev.id} ->`, JSON.stringify(state));
@@ -421,21 +413,14 @@ app.post('/google/smarthome', async (req,res)=>{
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-                if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 100;
-          let h=0,s=0,v=1;
-          if(d.color){
-            if(d.color.hue!==undefined) h=d.color.hue;
-            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-            if(d.color.brightness!==undefined) v=d.color.brightness/100;
-          }
+        if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 80;
+          const col = d.color || {hue:45, saturation:1, brightness: bri};
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
+          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
         }
         devicesState[q.id]=state;
       }
-      for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
-      console.log('V27 QUERY RETURNING:', JSON.stringify(devicesState).slice(0,600));
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
@@ -524,35 +509,6 @@ server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} 
 global.offlineDevices = global.offlineDevices || new Set();
 global.qCount = global.qCount || {};
 
-
-app.get('/test/version', (req,res)=> res.json({version: SERVER_VER, time: new Date().toISOString()}));
-app.get('/test/fix-color', async (req,res)=>{
-  try{
-    const id=req.query.id;
-    const filter=id? {id:id} : {type:'LIGHT'};
-    const devices=await Device.find(filter);
-    let fixed=[];
-    for(let dev of devices){
-      if(dev.color){
-        let clean={ hue: dev.color.hue||0, saturation: dev.color.saturation||0, brightness: dev.color.brightness||100 };
-        if(clean.saturation>1) clean.saturation=clean.saturation/100;
-        dev.color=clean; dev.markModified('color'); await dev.save(); fixed.push({id:dev.id, color:dev.color});
-      }
-    }
-    res.json({success:true, fixed, version: SERVER_VER});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.get('/test/query', async (req,res)=>{
-  try{
-    const id=req.query.id;
-    const dev=await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
-    if(s>1) s=s/100;
-    let state={online:true, color:{ spectrumHsv:{ hue:h, saturation:s, value:v } }};
-    res.json({deviceId:id, queryState:state, version: SERVER_VER});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
 app.get('/test/offline', async (req,res)=>{
   try{
     const dbStates = await OfflineState.find({offline:true});
@@ -562,35 +518,6 @@ app.get('/test/offline', async (req,res)=>{
     res.json({offlineDevices: merged, db: dbList, memory: memList, source:'V12 DB collection'});
   }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices), error:e.message}); }
 });
-
-app.get('/test/version', (req,res)=> res.json({version: SERVER_VER, time: new Date().toISOString()}));
-app.get('/test/fix-color', async (req,res)=>{
-  try{
-    const id=req.query.id;
-    const filter=id? {id:id} : {type:'LIGHT'};
-    const devices=await Device.find(filter);
-    let fixed=[];
-    for(let dev of devices){
-      if(dev.color){
-        let clean={ hue: dev.color.hue||0, saturation: dev.color.saturation||0, brightness: dev.color.brightness||100 };
-        if(clean.saturation>1) clean.saturation=clean.saturation/100;
-        dev.color=clean; dev.markModified('color'); await dev.save(); fixed.push({id:dev.id, color:dev.color});
-      }
-    }
-    res.json({success:true, fixed, version: SERVER_VER});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.get('/test/query', async (req,res)=>{
-  try{
-    const id=req.query.id;
-    const dev=await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
-    if(s>1) s=s/100;
-    let state={online:true, color:{ spectrumHsv:{ hue:h, saturation:s, value:v } }};
-    res.json({deviceId:id, queryState:state, version: SERVER_VER});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
 app.get('/test/offline/clear', async (req,res)=>{
   try{
     await OfflineState.deleteMany({});
@@ -602,35 +529,6 @@ app.get('/test/offline/clear', async (req,res)=>{
   try{ const all = await Device.find({}); for(const d of all){ await forceReportOnline(d.id, true); } }catch(e){ console.log('clear report err', e.message); }
   res.json({success:true, cleared:true, offlineDevices:[]});
 });
-
-app.get('/test/version', (req,res)=> res.json({version: SERVER_VER, time: new Date().toISOString()}));
-app.get('/test/fix-color', async (req,res)=>{
-  try{
-    const id=req.query.id;
-    const filter=id? {id:id} : {type:'LIGHT'};
-    const devices=await Device.find(filter);
-    let fixed=[];
-    for(let dev of devices){
-      if(dev.color){
-        let clean={ hue: dev.color.hue||0, saturation: dev.color.saturation||0, brightness: dev.color.brightness||100 };
-        if(clean.saturation>1) clean.saturation=clean.saturation/100;
-        dev.color=clean; dev.markModified('color'); await dev.save(); fixed.push({id:dev.id, color:dev.color});
-      }
-    }
-    res.json({success:true, fixed, version: SERVER_VER});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.get('/test/query', async (req,res)=>{
-  try{
-    const id=req.query.id;
-    const dev=await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
-    if(s>1) s=s/100;
-    let state={online:true, color:{ spectrumHsv:{ hue:h, saturation:s, value:v } }};
-    res.json({deviceId:id, queryState:state, version: SERVER_VER});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
 app.get('/test/offline/set', async (req,res)=>{
   try{
     const id = req.query.id;
@@ -725,21 +623,14 @@ app.post('/google', async (req,res)=>{
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-                if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 100;
-          let h=0,s=0,v=1;
-          if(d.color){
-            if(d.color.hue!==undefined) h=d.color.hue;
-            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-            if(d.color.brightness!==undefined) v=d.color.brightness/100;
-          }
+        if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 80;
+          const col = d.color || {hue:45, saturation:1, brightness: bri};
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
+          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
         }
         devicesState[q.id]=state;
       }
-      for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
-      console.log('V27 QUERY RETURNING:', JSON.stringify(devicesState).slice(0,600));
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
