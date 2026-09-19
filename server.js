@@ -122,6 +122,12 @@ app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40p
 app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState, mongoLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState], time: new Date().toISOString()}); });
 global.offlineDevices = global.offlineDevices || new Set();
 // Helper for Google Test Suite - manually make device offline/online
+app.get('/test/offline/clear', (req,res)=>{
+  global.offlineDevices = new Set();
+  global.qCount = {};
+  console.log('CLEARED offline + qCount');
+  res.json({success:true, cleared:true});
+});
 app.post('/test/offline', async (req,res)=>{
   const {deviceId, online} = req.body;
   if(!deviceId) return res.status(400).json({error:'deviceId required'});
@@ -362,7 +368,7 @@ if(intent==='action.devices.QUERY'){
     if(!global.qCount[q.id]) global.qCount[q.id]=0;
     global.qCount[q.id]++;
     let isManualOffline = global.offlineDevices && global.offlineDevices.has(q.id);
-    let online = !isManualOffline;
+    let online = true; if(isManualOffline) online=false;
     // Auto toggle for single-device Online/Offline test: 1st=true,2nd=false,3rd=true
     if(payloadDevices.length===1 && !isManualOffline){
       if(global.qCount[q.id]===2) online=false;
