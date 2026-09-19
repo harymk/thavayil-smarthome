@@ -91,7 +91,9 @@ async function sendAlexaChangeReport(userId, dev){
 async function sendGoogleReportState(userId, dev){
   try{
     if(!lastReportedState[userId]) lastReportedState[userId] = {};
-    let state = { online: true, on: dev.state==='ON' };
+    let forcedOnline = (dev._forceOnline!==undefined) ? dev._forceOnline : true;
+    try{ const off = await OfflineState.findOne({deviceId: dev.id || dev.deviceId}); if(off && off.offline) forcedOnline = false; if(dev._forceOnline!==undefined) forcedOnline = dev._forceOnline; }catch(e){}
+    let state = { online: forcedOnline, on: dev.state==='ON' };
     if(dev.type==='FAN'){
       const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
       state.currentFanSpeedSetting = map[dev.speed] || 'medium';
@@ -118,63 +120,6 @@ async function sendGoogleReportState(userId, dev){
     }catch(e){ console.log('HomeGraph auth error', e.message); }
   }catch(e){ console.log('ReportState error', e.message); }
 }
-
-async function sendOnlineReport(deviceId, isOnline){
-  try{
-    const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
-    if(!dev) return;
-    const userId = dev.userId;
-    // Try to find google token from memory or DB
-    let token = googleTokens[userId];
-    if(!token){
-      // Try to get from DB if stored
-      try{
-        const u = await User.findOne({id:userId});
-        if(u && u.googleToken) token = u.googleToken;
-        if(u && u.googleAccessToken) token = u.googleAccessToken;
-      }catch(e){}
-    }
-    console.log('V15 Report attempt device', deviceId, 'online', isOnline, 'user', userId, 'hasToken', !!token);
-    // Use existing sendGoogleReportState if token exists, else try service account method
-    if(typeof sendGoogleReportState === 'function' && dev){
-      // Temporarily set dev online state for report
-      // We will directly call homegraph with service account if token missing
-      if(token){
-        await sendGoogleReportState(userId, {...dev.toObject(), _forceOnline: isOnline});
-      } else {
-        // Fallback: try service account via environment variable
-        console.log('V15 No user token, trying service account report');
-        try{
-          const {google} = require('googleapis');
-          // If GOOGLE_APPLICATION_CREDENTIALS set
-          const auth = new google.auth.GoogleAuth({
-            scopes: ['https://www.googleapis.com/auth/homegraph']
-          });
-          const client = await auth.getClient();
-          const homegraph = google.homegraph({version:'v1', auth:client});
-          await homegraph.devices.reportStateAndNotification({
-            requestBody:{
-              requestId: 'offline-'+Date.now(),
-              agentUserId: userId,
-              payload:{
-                devices:{
-                  states:{
-                    [deviceId]:{online: isOnline}
-                  }
-                }
-              }
-            }
-          });
-          console.log('V15 ServiceAccount ReportState sent', deviceId, isOnline);
-        }catch(e){
-          console.log('V15 ServiceAccount failed', e.message);
-          // Last resort: still log that we would be online for QUERY
-        }
-      }
-    }
-  }catch(e){ console.log('V15 sendOnlineReport error', e.message); }
-}
-
 
 app.use(cors({ origin: "*" }));
 app.use(express.json());
@@ -376,7 +321,6 @@ app.post('/google/smarthome', async (req,res)=>{
     const intent = req.body.inputs?.[0]?.intent;
     console.log(`GOOGLE ${intent} for user ${userId}`);
 
-    console.log('SMARTHOME INTENT SYNC user', userId);
     if(intent==='action.devices.SYNC'){
       const userDevices=await Device.find({userId});
       const devices=userDevices.map(d=>{
@@ -406,8 +350,7 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                        console.log('SMARTHOME INTENT', intent, 'user', userId, JSON.stringify(req.body).slice(0,500));
-    if(intent==='action.devices.QUERY'){
+                    if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
@@ -415,14 +358,13 @@ app.post('/google/smarthome', async (req,res)=>{
       try{
         const offStates = await OfflineState.find({offline:true});
         dbOfflineIds = offStates.map(s=>s.deviceId);
-      }catch(e){ console.log('V13 offline fetch error', e.message); }
-      console.log('V13 QUERY START', JSON.stringify({queryIds: payloadDevices.map(p=>p.id), dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
+      }catch(e){ console.log('query offline fetch error', e.message); }
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         let isOffline = false;
-        // V13 ONLY checks OfflineState collection + memory, ignores Device.offline field to avoid stale data
         if(dbOfflineIds.includes(q.id)) isOffline=true;
         if(global.offlineDevices.has(q.id)) isOffline=true;
+        if(d && d.offline===true) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -441,7 +383,7 @@ app.post('/google/smarthome', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('V13 QUERY RESULT', JSON.stringify(devicesState));
+      console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
@@ -526,6 +468,30 @@ server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} 
 
 
 
+
+// V16: Force relay online true/false to Google Home Graph
+async function forceReportOnline(deviceId, isOnline){
+  try{
+    const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
+    if(!dev){ console.log('forceReport no dev', deviceId); return; }
+    console.log('V16 FORCE REPORT', deviceId, 'online=', isOnline);
+    if(typeof sendGoogleReportState === 'function'){
+      dev._forceOnline = isOnline;
+      await sendGoogleReportState(dev.userId, dev);
+    }
+  }catch(e){ console.log('V16 forceReport error', e.message); }
+}
+
+app.get('/test/report', async (req,res)=>{
+  try{
+    const id = req.query.id || '6328761164';
+    const online = req.query.online !== 'false';
+    console.log('V16 MANUAL REPORT', id, 'online', online);
+    await forceReportOnline(id, online);
+    res.json({success:true, device:id, online:online});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 global.offlineDevices = global.offlineDevices || new Set();
 global.qCount = global.qCount || {};
 
@@ -541,16 +507,12 @@ app.get('/test/offline', async (req,res)=>{
 app.get('/test/offline/clear', async (req,res)=>{
   try{
     await OfflineState.deleteMany({});
-    await OfflineState.updateMany({}, {offline:false});
     await Device.updateMany({}, {$set:{offline:false}});
   }catch(e){ console.log('clear error', e.message); }
   global.offlineDevices = new Set();
   global.qCount = {};
-  console.log('V15 CLEARED ALL - sending online true reports');
-  try{
-    const allDevs = await Device.find({});
-    for(const d of allDevs){ await sendOnlineReport(d.id, true); }
-  }catch(e){ console.log('clear report error', e.message); }
+  console.log('V16 CLEARED ALL - reporting online true for all');
+  try{ const all = await Device.find({}); for(const d of all){ await forceReportOnline(d.id, true); } }catch(e){ console.log('clear report err', e.message); }
   res.json({success:true, cleared:true, offlineDevices:[]});
 });
 app.get('/test/offline/set', async (req,res)=>{
@@ -560,21 +522,18 @@ app.get('/test/offline/set', async (req,res)=>{
     if(!id) return res.status(400).json({error:'id required'});
     const isOnline = (onlineParam==='true' || onlineParam==='1');
     const isOffline = !isOnline;
-    // Memory
     if(isOffline) global.offlineDevices.add(id); else global.offlineDevices.delete(id);
-    // DB collection - upsert
     try{
       await OfflineState.findOneAndUpdate({deviceId:id}, {deviceId:id, offline:isOffline, updatedAt:new Date()}, {upsert:true, new:true});
-      // Also try Device
       const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
       if(dev){ dev.offline = isOffline; await dev.save(); }
-      console.log('V12 SET', id, 'offline=', isOffline);
-    }catch(e){ console.log('V12 set DB error', e.message); }
+      console.log('V16 SET', id, 'offline=', isOffline);
+    }catch(e){ console.log('V16 set error', e.message); }
     global.qCount[id]=0;
+    await forceReportOnline(id, !isOffline);
     res.json({success:true, device:id, online:isOnline, offline:isOffline});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
-
 app.post('/test/offline', async (req,res)=>{
   try{
     const {deviceId, online} = req.body || {};
@@ -583,64 +542,16 @@ app.post('/test/offline', async (req,res)=>{
     const isOffline = !isOnline;
     if(isOffline) global.offlineDevices.add(deviceId); else global.offlineDevices.delete(deviceId);
     global.qCount[deviceId]=0;
-    let devForReport = null;
     try{
       await OfflineState.findOneAndUpdate({deviceId:deviceId}, {deviceId:deviceId, offline:isOffline, updatedAt:new Date()}, {upsert:true, new:true});
       const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
-      if(dev){
-        dev.offline = isOffline;
-        await dev.save();
-        devForReport = dev;
-        if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev);
-      }
-      console.log('V14 POST', deviceId, 'offline=', isOffline);
-    }catch(e){ console.log('V14 post error', e.message); }
-    // Send ReportState to Google Home Graph so Test Suite sees it
-    try{
-      if(devForReport){
-        // Force report with online status
-        const userId = devForReport.userId;
-        const token = googleTokens[userId];
-        if(token){
-          const https = require('https');
-          const payload = {
-            requestId: 'offline-'+Date.now(),
-            agentUserId: userId,
-            payload: {
-              devices: {
-                states: {
-                  [deviceId]: { online: !isOffline }
-                }
-              }
-            }
-          };
-          console.log('V14 ReportState sending', JSON.stringify(payload));
-          const postData = JSON.stringify(payload);
-          const options = {
-            hostname: 'homegraph.googleapis.com',
-            path: '/v1/devices:reportStateAndNotification',
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(postData),
-              'Authorization': 'Bearer '+token
-            }
-          };
-          const r = https.request(options, (resp)=>{
-            let d=''; resp.on('data', c=>d+=c); resp.on('end', ()=>console.log('V14 ReportState resp', resp.statusCode, d.slice(0,200)));
-          });
-          r.on('error', (e)=>console.log('V14 ReportState error', e.message));
-          r.write(postData);
-          r.end();
-        } else {
-          console.log('V14 no google token for user', userId);
-        }
-      }
-    }catch(e){ console.log('V14 report error', e.message); }
+      if(dev){ dev.offline = isOffline; await dev.save(); if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev); }
+      console.log('V16 POST', deviceId, 'offline=', isOffline);
+    }catch(e){ console.log('V16 post error', e.message); }
+    await forceReportOnline(deviceId, !isOffline);
     res.json({success:true, device:deviceId, online:isOnline, offline:isOffline});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
-
 
 
 
@@ -658,7 +569,6 @@ app.post('/google', async (req,res)=>{
     const requestId = req.body.requestId;
     const intent = req.body.inputs[0].intent;
 
-    console.log('SMARTHOME INTENT SYNC user', userId);
     if(intent==='action.devices.SYNC'){
       const userDevices=await Device.find({userId});
       const devices=userDevices.map(d=>{
@@ -673,8 +583,7 @@ app.post('/google', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                        console.log('SMARTHOME INTENT', intent, 'user', userId, JSON.stringify(req.body).slice(0,500));
-    if(intent==='action.devices.QUERY'){
+                    if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
@@ -682,14 +591,13 @@ app.post('/google', async (req,res)=>{
       try{
         const offStates = await OfflineState.find({offline:true});
         dbOfflineIds = offStates.map(s=>s.deviceId);
-      }catch(e){ console.log('V13 offline fetch error', e.message); }
-      console.log('V13 QUERY START', JSON.stringify({queryIds: payloadDevices.map(p=>p.id), dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
+      }catch(e){ console.log('query offline fetch error', e.message); }
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         let isOffline = false;
-        // V13 ONLY checks OfflineState collection + memory, ignores Device.offline field to avoid stale data
         if(dbOfflineIds.includes(q.id)) isOffline=true;
         if(global.offlineDevices.has(q.id)) isOffline=true;
+        if(d && d.offline===true) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -708,7 +616,7 @@ app.post('/google', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('V13 QUERY RESULT', JSON.stringify(devicesState));
+      console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
