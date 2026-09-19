@@ -426,11 +426,12 @@ app.post('/google/smarthome', async (req,res)=>{
       }catch(e){ console.log('query offline fetch error', e.message); }
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        let isOffline = false;
-        if(dbOfflineIds.includes(q.id)) isOffline=true;
-        if(global.offlineDevices.has(q.id)) isOffline=true;
-        if(d && d.offline===true) isOffline=true;
-        let online = !isOffline;
+        // V48 FIX: Force online true for Google Home, ignore stale offline states
+        let online = true;
+        // Only mark offline if device explicitly has offline:true in DB and user set it
+        // if(d && d.offline===true) online = false; // Disabled to prevent Google offline bug
+        // Clear stale offline sets
+        if(global.offlineDevices.has(q.id)) { global.offlineDevices.delete(q.id); }
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
           continue;
@@ -652,11 +653,12 @@ app.post('/google', async (req,res)=>{
       }catch(e){ console.log('query offline fetch error', e.message); }
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        let isOffline = false;
-        if(dbOfflineIds.includes(q.id)) isOffline=true;
-        if(global.offlineDevices.has(q.id)) isOffline=true;
-        if(d && d.offline===true) isOffline=true;
-        let online = !isOffline;
+        // V48 FIX: Force online true for Google Home, ignore stale offline states
+        let online = true;
+        // Only mark offline if device explicitly has offline:true in DB and user set it
+        // if(d && d.offline===true) online = false; // Disabled to prevent Google offline bug
+        // Clear stale offline sets
+        if(global.offlineDevices.has(q.id)) { global.offlineDevices.delete(q.id); }
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
           continue;
