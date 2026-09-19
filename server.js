@@ -20,8 +20,8 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V59 CLEAN...');
-mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V59')).catch(e=>console.log('Mongo error', e.message));
+console.log('Starting V60 CLEAN...');
+mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V60')).catch(e=>console.log('Mongo error', e.message));
 
 // MODELS
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
@@ -92,7 +92,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // --- TEST ENDPOINTS (GUARANTEED) ---
-app.get('/test/version', (req,res)=> res.json({version:'V59_DASHBOARD_SEPARATE', ok:true, time:new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V60_FAN_FIX', ok:true, time:new Date().toISOString()}));
 app.get('/test/google-sync/:userId', async (req,res)=>{
   try{
     const devs = await Device.find({userId:req.params.userId});
@@ -104,14 +104,14 @@ app.get('/test/offline/clear', async (req,res)=>{
     await OfflineState.deleteMany({});
     await Device.updateMany({}, {$set:{offline:false}});
     offlineDevices.clear();
-    res.json({success:true, cleared:true, version:'V59'});
+    res.json({success:true, cleared:true, version:'V60'});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 app.get('/test/offline', async (req,res)=>{
   try{
     const db = await OfflineState.find({offline:true});
     const devs = await Device.find({offline:true});
-    res.json({offlineDevices:db.map(d=>d.deviceId), offlineDeviceDocs:devs.map(d=>d.id), memory:Array.from(offlineDevices), version:'V59'});
+    res.json({offlineDevices:db.map(d=>d.deviceId), offlineDeviceDocs:devs.map(d=>d.id), memory:Array.from(offlineDevices), version:'V60'});
   }catch(e){ res.json({offlineDevices:Array.from(offlineDevices)}); }
 });
 
@@ -223,7 +223,21 @@ async function googleHandler(req,res){
             const p = ex.params;
             if(ex.command==='action.devices.commands.OnOff'){ d.state=p.on?'ON':'OFF'; ns.on=p.on; }
             if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:b}; d.color.brightness=b; d.state='ON'; ns.brightness=b; ns.on=true; }
-            // V59: Color change does NOT touch brightness - separate
+            // V60: Color change does NOT touch brightness - separate
+            if(ex.command==='action.devices.commands.SetFanSpeed'){
+              console.log('GOOGLE SetFanSpeed', p);
+              if(p.fanSpeed){
+                const mapStr={low:2, 'low 1':1, 'low 2':2, medium:3, 'medium low':2, 'medium high':4, high:5, 'high 1':4, 'high 2':5};
+                let s = mapStr[p.fanSpeed.toLowerCase()] || 3;
+                d.speed=s; d.state='ON'; ns.currentFanSpeedSetting=p.fanSpeed; ns.on=true;
+              } else if(p.fanSpeedPercent!==undefined){
+                const pct=parseInt(p.fanSpeedPercent);
+                let s=1; if(pct<=20) s=1; else if(pct<=40) s=2; else if(pct<=60) s=3; else if(pct<=80) s=4; else s=5;
+                d.speed=s; d.state='ON';
+                const revMap={1:'low',2:'low',3:'medium',4:'high',5:'high'};
+                ns.currentFanSpeedSetting=revMap[s]; ns.on=true;
+              }
+            }
             if(ex.command==='action.devices.commands.ColorAbsolute' && p.color?.spectrumHSV){
               const hsv=p.color.spectrumHSV;
               if(!d.color) d.color={hue:45, saturation:1, brightness:d.brightness||100};
@@ -293,13 +307,28 @@ app.post('/alexa/smarthome', async (req,res)=>{
       let dev=await Device.findOne({id:eid, userId}); if(dev){ const bb=Math.max(5,Math.min(100, parseInt(b))); dev.brightness=bb; if(!dev.color) dev.color={hue:45,saturation:1,brightness:bb}; dev.color.brightness=bb; dev.state='ON'; dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.BrightnessController', name:'brightness', value:bb, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}}); }
     }
 
+
+    if(ns==='Alexa.RangeController' && req.body.directive.endpoint){
+      const eid=req.body.directive.endpoint.endpointId;
+      const rangeVal=req.body.directive.payload.rangeValue;
+      console.log('ALEXA RangeController Fan', eid, rangeVal);
+      let dev=await Device.findOne({id:eid, userId});
+      if(dev && dev.type==='FAN'){
+        dev.speed=Math.max(1,Math.min(5, parseInt(rangeVal)));
+        dev.state='ON'; dev.offline=false;
+        await dev.save();
+        io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev);
+        return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.RangeController', instance:'FanSpeed', name:'rangeValue', value:dev.speed, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
+      }
+    }
+
     if(ns==='Alexa.ColorController' && name==='SetColor'){
       const eid=req.body.directive.endpoint.endpointId;
       const col=req.body.directive.payload.color;
       console.log('ALEXA SetColor', col);
       let dev=await Device.findOne({id:eid, userId});
       if(dev){
-        // V59: Alexa color does NOT change brightness
+        // V60: Alexa color does NOT change brightness
         if(!dev.color) dev.color={hue:45, saturation:1, brightness:dev.brightness||100};
         dev.color.hue=Math.round(col.hue)%360;
         let s=parseFloat(col.saturation); if(s>1) s=s/100; dev.color.saturation=Math.max(0,Math.min(1,s));
@@ -315,8 +344,8 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.log('ALEXA ERR', e.message); res.status(500).json({error:e.message}); }
 });
 
-app.get('/privacy', (req,res)=> res.send('Privacy Policy - Thavayil SmartHome V59'));
-app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V59_DASHBOARD_SEPARATE LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
+app.get('/privacy', (req,res)=> res.send('Privacy Policy - Thavayil SmartHome V60'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil SmartHome V60_FAN_FIX LIVE</h1><p><a href="/test/version">/test/version</a></p>'));
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil SmartHome V59_DASHBOARD_SEPARATE Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil SmartHome V60_FAN_FIX Port ${PORT}`));
