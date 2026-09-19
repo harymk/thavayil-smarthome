@@ -21,7 +21,7 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V69 FINAL DISCOVERY ALEXA LINK FIX...');
+console.log('Starting V71 FINAL TEST ALEXA LINK FIX...');
 mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V66')).catch(e=>console.log('Mongo error', e.message));
 
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
@@ -110,7 +110,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // TEST
-app.get('/test/version', (req,res)=> res.json({version:'V69_FINAL_DISCOVERY', ok:true}));
+app.get('/test/version', (req,res)=> res.json({version:'V71_FINAL_TEST', ok:true}));
 app.get('/test/offline/clear', async (req,res)=>{
   await OfflineState.deleteMany({}); await Device.updateMany({}, {offline:false}); offlineDevices.clear();
   res.json({success:true, version:'V66'});
@@ -356,6 +356,55 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.log('ALEXA ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
 });
 
-app.get('/', (req,res)=> res.send('<h1>Thavayil V69 FINAL DISCOVERY ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil V71 FINAL TEST ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
+
+// TEST: Alexa discovery json for debugging
+app.get('/test/alexa-discover/:userId', async (req,res)=>{
+  const userId = req.params.userId;
+  const userDevices = await Device.find({userId});
+  const endpoints=userDevices.map(d=>{
+    let n=(d.name||'').trim();
+    if(n.length<3) n=`${d.type||'Device'} ${d.id.toString().slice(-4)}`;
+    return {
+      endpointId:(d.id||d.deviceId).toString(),
+      friendlyName:n,
+      description:`${d.type} ${n}`,
+      manufacturerName:'Thavayil Electronics',
+      displayCategories:[d.type==='LIGHT'?'LIGHT':d.type==='FAN'?'FAN':'SWITCH'],
+      cookie:{userId}
+    };
+  });
+  res.json({found:userDevices.length, endpoints});
+});
+
+// Rename device
+app.post('/api/device/rename', authMw, async (req,res)=>{
+  const {deviceId, name} = req.body;
+  let dev = await Device.findOne({id:deviceId, userId:req.user.userId}) || await Device.findOne({deviceId, userId:req.user.userId});
+  if(!dev) return res.status(404).json({error:'not found'});
+  if(!name || name.trim().length<3) return res.status(400).json({error:'name must be at least 3 chars'});
+  dev.name = name.trim();
+  await dev.save();
+  io.to('user_'+req.user.userId).emit('device_updated', dev);
+  io.emit('device_updated', dev);
+  res.json({success:true, device:dev});
+});
+
+// Auto-rename short names on startup
+(async()=>{
+  try{
+    await new Promise(r=>setTimeout(r, 5000));
+    const devs = await Device.find({userId:'1789741458155'});
+    for(const d of devs){
+      if((d.name||'').length<3){
+        const newName = d.type==='FAN' ? `Bedroom Fan ${d.id.slice(-2)}` : d.type==='LIGHT' ? `Living Light ${d.id.slice(-2)}` : `Switch ${d.id.slice(-2)}`;
+        console.log(`AUTO-RENAME ${d.id} ${d.name} -> ${newName}`);
+        d.name = newName;
+        await d.save();
+      }
+    }
+  }catch(e){ console.log('auto-rename error', e.message); }
+})();
+
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil V69 FINAL DISCOVERY Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil V71 FINAL TEST Port ${PORT}`));
