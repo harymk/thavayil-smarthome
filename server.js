@@ -340,16 +340,19 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-            if(intent==='action.devices.QUERY'){
+                if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
+      // Preload DB offline list
+      let dbOfflineIds = [];
+      try{ const offDevs = await Device.find({offline:true}); dbOfflineIds = offDevs.map(d=>d.id); }catch(e){}
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        // Check DB offline first, then memory fallback
         let isOffline = false;
+        if(dbOfflineIds.includes(q.id)) isOffline=true;
+        if(global.offlineDevices.has(q.id)) isOffline=true;
         if(d && d.offline===true) isOffline=true;
-        else if(global.offlineDevices.has(q.id)) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -368,7 +371,7 @@ app.post('/google/smarthome', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V10 DB', JSON.stringify({offlineDB: (await Device.find({offline:true})).map(x=>x.id), memory:Array.from(global.offlineDevices), result:devicesState}));
+      console.log('QUERY V11 MERGED', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices), result:devicesState}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
@@ -451,23 +454,27 @@ const PORT=process.env.PORT||10000;
 server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
 
 
+
 global.offlineDevices = global.offlineDevices || new Set();
 global.qCount = global.qCount || {};
 
 app.get('/test/offline', async (req,res)=>{
   try{
-    const devs = await Device.find({offline:true});
-    res.json({offlineDevices: devs.map(d=>d.id), fromDB: true, memory: Array.from(global.offlineDevices)});
+    let dbList=[];
+    try{ const devs = await Device.find({offline:true}); dbList = devs.map(d=>d.id||d.deviceId); }catch(e){}
+    const memList = Array.from(global.offlineDevices);
+    const merged = [...new Set([...dbList, ...memList])];
+    res.json({offlineDevices: merged, db: dbList, memory: memList});
   }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices)}); }
 });
 app.get('/test/offline/clear', async (req,res)=>{
   try{
     await Device.updateMany({}, {$set:{offline:false}});
-    global.offlineDevices = new Set();
-    global.qCount = {};
-    console.log('CLEARED offline DB + memory');
-    res.json({success:true, cleared:true});
-  }catch(e){ global.offlineDevices=new Set(); res.json({success:true}); }
+  }catch(e){}
+  global.offlineDevices = new Set();
+  global.qCount = {};
+  console.log('CLEARED ALL OFFLINE');
+  res.json({success:true, cleared:true, offlineDevices:[]});
 });
 app.get('/test/offline/set', async (req,res)=>{
   try{
@@ -475,15 +482,16 @@ app.get('/test/offline/set', async (req,res)=>{
     const onlineParam = req.query.online;
     if(!id) return res.status(400).json({error:'id required'});
     const isOnline = (onlineParam==='true' || onlineParam==='1');
-    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    if(dev){
-      dev.offline = !isOnline;
-      await dev.save();
-    }
+    // Always update memory
     if(!isOnline) global.offlineDevices.add(id); else global.offlineDevices.delete(id);
+    // Try DB
+    try{
+      const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
+      if(dev){ dev.offline = !isOnline; await dev.save(); console.log('DB updated', id, 'offline=', !isOnline); }
+      else { console.log('Device not found in DB for offline set', id, 'but memory updated'); }
+    }catch(e){ console.log('DB error', e.message); }
     global.qCount[id]=0;
-    console.log('SET via GET DB', id, 'online=', isOnline);
-    res.json({success:true, device:id, online:isOnline, offline:!isOnline});
+    res.json({success:true, device:id, online:isOnline, offline:!isOnline, memory:Array.from(global.offlineDevices)});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 app.post('/test/offline', async (req,res)=>{
@@ -491,18 +499,25 @@ app.post('/test/offline', async (req,res)=>{
     const {deviceId, online} = req.body || {};
     if(!deviceId) return res.status(400).json({error:'deviceId required'});
     const isOnline = (online===true || online==='true');
-    const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
-    if(dev){
-      dev.offline = !isOnline;
-      await dev.save();
-      if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev);
-    }
+    // Always memory
     if(!isOnline) global.offlineDevices.add(deviceId); else global.offlineDevices.delete(deviceId);
     global.qCount[deviceId]=0;
-    console.log('SET via POST DB', deviceId, 'online=', isOnline, 'offline=', !isOnline);
-    res.json({success:true, device:deviceId, online:isOnline, offline:!isOnline});
+    // Try DB, but don't fail if not found
+    try{
+      const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
+      if(dev){
+        dev.offline = !isOnline;
+        await dev.save();
+        if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev);
+        console.log('POST DB saved', deviceId, 'offline=', !isOnline);
+      } else {
+        console.log('POST Device not found', deviceId, 'keeping in memory only');
+      }
+    }catch(e){ console.log('POST DB error', e.message); }
+    res.json({success:true, device:deviceId, online:isOnline, offline:!isOnline, memory:Array.from(global.offlineDevices)});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
+
 
 
 app.post('/google', async (req,res)=>{
@@ -532,16 +547,19 @@ app.post('/google', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-            if(intent==='action.devices.QUERY'){
+                if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
+      // Preload DB offline list
+      let dbOfflineIds = [];
+      try{ const offDevs = await Device.find({offline:true}); dbOfflineIds = offDevs.map(d=>d.id); }catch(e){}
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        // Check DB offline first, then memory fallback
         let isOffline = false;
+        if(dbOfflineIds.includes(q.id)) isOffline=true;
+        if(global.offlineDevices.has(q.id)) isOffline=true;
         if(d && d.offline===true) isOffline=true;
-        else if(global.offlineDevices.has(q.id)) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -560,7 +578,7 @@ app.post('/google', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V10 DB', JSON.stringify({offlineDB: (await Device.find({offline:true})).map(x=>x.id), memory:Array.from(global.offlineDevices), result:devicesState}));
+      console.log('QUERY V11 MERGED', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices), result:devicesState}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
