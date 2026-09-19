@@ -58,7 +58,7 @@
 <button class="btn btn-w" style="height:48px" onclick="addDevice()">+ Add Device</button>
 <div id="addMsg" style="font-size:11px;color:#71717a"></div>
 </div></div>
-<div><div style="display:flex;justify-content:space-between;margin-bottom:12px"><h3 style="font-size:12px;color:#71717a">MY DEVICES - <span id="myDevCount">0</span></h3><button class="btn-small" onclick="loadDevices()">Refresh</button></div><div id="devices" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px"></div></div>
+<div><div style="display:flex;justify-content:space-between;margin-bottom:12px;align-items:center"><h3 style="font-size:12px;color:#71717a">MY DEVICES - <span id="myDevCount">0</span></h3><div style="display:flex;gap:8px"><button class="btn-small" style="background:#10b981;color:#000;font-weight:700" onclick="makeAllOnline()">Make ALL ONLINE</button><button class="btn-small" onclick="loadDevices()">Refresh</button></div></div><div id="devices" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px"></div></div>
 <div class="card"><div style="padding:16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="font-size:13px;font-weight:600">ESP32 Code</div><button class="btn btn-g" style="height:32px;font-size:11px;padding:0 12px" onclick="copyCode()">Copy Code</button></div><div style="padding:16px"><pre id="codeBlock" class="mono code-block" style="font-size:10px"></pre></div></div>
 </div></div>
 <div id="toast" class="toast" style="display:none"><span id="toastMsg"></span></div>
@@ -126,6 +126,13 @@ function loadDevices(){
   .then(function(r){ if(!r.ok){ if(r.status===401){showToast('Login again'); signout(); return null;} throw new Error('Failed'); } return r.json(); })
   .then(function(data){ if(!data) return; devices=Array.isArray(data)?data:data.devices||[]; render(); loadOfflineStatus(); })
   .catch(function(err){ console.error(err); });
+}
+function makeAllOnline(){
+  fetch(API+'/test/offline/clear',{headers:{Authorization:'Bearer '+(localStorage.getItem('token')||'')}})
+  .then(function(r){return r.json();}).then(function(){
+    showToast('All devices set ONLINE - Now start Test Suite');
+    loadOfflineStatus();
+  });
 }
 function loadOfflineStatus(){
   fetch(API+'/test/offline',{headers:{Authorization:'Bearer '+(localStorage.getItem('token')||'')}})
