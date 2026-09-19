@@ -570,10 +570,12 @@ app.post('/google/smarthome', async (req,res)=>{
         let state={online:true, status:'SUCCESS', on: d.state==='ON'};
         if(d.type==='LIGHT'){
           const bri=d.brightness!==undefined?d.brightness:100;
-          let h=0,s=0,v=1;
-          if(d.color){ if(d.color.hue!==undefined) h=d.color.hue; if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; } if(d.color.brightness!==undefined) v=d.color.brightness/100; }
+          let h=0,s=0;
+          if(d.color){ if(d.color.hue!==undefined) h=d.color.hue; if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; } }
+          // V41 FIX: color value must match brightness trait, else dashboard auto-adjusts brightness to value
+          const v = bri/100;
           state.brightness=bri;
-          state.color={ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
+          state.color={ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:(state.brightness||100)/100 } };
         }
         if(d.type==='FAN'){ state.currentFanSpeedSetting=d.speed||'low'; }
         devicesState[d.id]=state;
@@ -634,7 +636,7 @@ app.post('/google/smarthome', async (req,res)=>{
                 d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1,hsv.saturation)), brightness:colorBrightness};
                 d.state='ON';
                 // Only update color, NOT brightness trait - brightness stays as user set it
-                newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}};
+                newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.brightness||100)/100}}; // V41: value = brightness/100 to prevent jump
                 newState.on=true;
                 // Don't send brightness in color command, so dashboard brightness slider doesn't jump
                 console.log(`V40 COLOR FIX: hue=${d.color.hue} sat=${d.color.saturation} colorBright=${colorBrightness} keeping device brightness=${d.brightness}`);
@@ -664,7 +666,7 @@ app.post('/smarthome', (req,res)=>{
 });
 
 
-app.get('/test/version', (req,res)=> res.json({version:'V40_COLOR_NO_BRIGHTNESS_JUMP', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V42_COLOR_VALUE_MATCHES_BRIGHTNESS', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id||'1875336409';
