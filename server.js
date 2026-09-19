@@ -348,7 +348,7 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                    if(intent==='action.devices.QUERY'){
+                        if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
@@ -356,13 +356,14 @@ app.post('/google/smarthome', async (req,res)=>{
       try{
         const offStates = await OfflineState.find({offline:true});
         dbOfflineIds = offStates.map(s=>s.deviceId);
-      }catch(e){ console.log('query offline fetch error', e.message); }
+      }catch(e){ console.log('V13 offline fetch error', e.message); }
+      console.log('V13 QUERY START', JSON.stringify({queryIds: payloadDevices.map(p=>p.id), dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         let isOffline = false;
+        // V13 ONLY checks OfflineState collection + memory, ignores Device.offline field to avoid stale data
         if(dbOfflineIds.includes(q.id)) isOffline=true;
         if(global.offlineDevices.has(q.id)) isOffline=true;
-        if(d && d.offline===true) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -381,7 +382,7 @@ app.post('/google/smarthome', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
+      console.log('V13 QUERY RESULT', JSON.stringify(devicesState));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
@@ -481,6 +482,7 @@ app.get('/test/offline', async (req,res)=>{
 app.get('/test/offline/clear', async (req,res)=>{
   try{
     await OfflineState.deleteMany({});
+    await OfflineState.updateMany({}, {offline:false});
     await Device.updateMany({}, {$set:{offline:false}});
   }catch(e){ console.log('clear error', e.message); }
   global.offlineDevices = new Set();
@@ -557,7 +559,7 @@ app.post('/google', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-                    if(intent==='action.devices.QUERY'){
+                        if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
@@ -565,13 +567,14 @@ app.post('/google', async (req,res)=>{
       try{
         const offStates = await OfflineState.find({offline:true});
         dbOfflineIds = offStates.map(s=>s.deviceId);
-      }catch(e){ console.log('query offline fetch error', e.message); }
+      }catch(e){ console.log('V13 offline fetch error', e.message); }
+      console.log('V13 QUERY START', JSON.stringify({queryIds: payloadDevices.map(p=>p.id), dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         let isOffline = false;
+        // V13 ONLY checks OfflineState collection + memory, ignores Device.offline field to avoid stale data
         if(dbOfflineIds.includes(q.id)) isOffline=true;
         if(global.offlineDevices.has(q.id)) isOffline=true;
-        if(d && d.offline===true) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -590,7 +593,7 @@ app.post('/google', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
+      console.log('V13 QUERY RESULT', JSON.stringify(devicesState));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
