@@ -119,6 +119,63 @@ async function sendGoogleReportState(userId, dev){
   }catch(e){ console.log('ReportState error', e.message); }
 }
 
+async function sendOnlineReport(deviceId, isOnline){
+  try{
+    const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
+    if(!dev) return;
+    const userId = dev.userId;
+    // Try to find google token from memory or DB
+    let token = googleTokens[userId];
+    if(!token){
+      // Try to get from DB if stored
+      try{
+        const u = await User.findOne({id:userId});
+        if(u && u.googleToken) token = u.googleToken;
+        if(u && u.googleAccessToken) token = u.googleAccessToken;
+      }catch(e){}
+    }
+    console.log('V15 Report attempt device', deviceId, 'online', isOnline, 'user', userId, 'hasToken', !!token);
+    // Use existing sendGoogleReportState if token exists, else try service account method
+    if(typeof sendGoogleReportState === 'function' && dev){
+      // Temporarily set dev online state for report
+      // We will directly call homegraph with service account if token missing
+      if(token){
+        await sendGoogleReportState(userId, {...dev.toObject(), _forceOnline: isOnline});
+      } else {
+        // Fallback: try service account via environment variable
+        console.log('V15 No user token, trying service account report');
+        try{
+          const {google} = require('googleapis');
+          // If GOOGLE_APPLICATION_CREDENTIALS set
+          const auth = new google.auth.GoogleAuth({
+            scopes: ['https://www.googleapis.com/auth/homegraph']
+          });
+          const client = await auth.getClient();
+          const homegraph = google.homegraph({version:'v1', auth:client});
+          await homegraph.devices.reportStateAndNotification({
+            requestBody:{
+              requestId: 'offline-'+Date.now(),
+              agentUserId: userId,
+              payload:{
+                devices:{
+                  states:{
+                    [deviceId]:{online: isOnline}
+                  }
+                }
+              }
+            }
+          });
+          console.log('V15 ServiceAccount ReportState sent', deviceId, isOnline);
+        }catch(e){
+          console.log('V15 ServiceAccount failed', e.message);
+          // Last resort: still log that we would be online for QUERY
+        }
+      }
+    }
+  }catch(e){ console.log('V15 sendOnlineReport error', e.message); }
+}
+
+
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 app.use(express.urlencoded({extended:true}));
@@ -489,7 +546,11 @@ app.get('/test/offline/clear', async (req,res)=>{
   }catch(e){ console.log('clear error', e.message); }
   global.offlineDevices = new Set();
   global.qCount = {};
-  console.log('V12 CLEARED ALL');
+  console.log('V15 CLEARED ALL - sending online true reports');
+  try{
+    const allDevs = await Device.find({});
+    for(const d of allDevs){ await sendOnlineReport(d.id, true); }
+  }catch(e){ console.log('clear report error', e.message); }
   res.json({success:true, cleared:true, offlineDevices:[]});
 });
 app.get('/test/offline/set', async (req,res)=>{
