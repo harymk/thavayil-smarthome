@@ -340,13 +340,16 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-        if(intent==='action.devices.QUERY'){
+            if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        let isOffline = global.offlineDevices.has(q.id);
+        // Check DB offline first, then memory fallback
+        let isOffline = false;
+        if(d && d.offline===true) isOffline=true;
+        else if(global.offlineDevices.has(q.id)) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -365,7 +368,7 @@ app.post('/google/smarthome', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V9 MANUAL ONLY', JSON.stringify({offline:Array.from(global.offlineDevices), result:devicesState}));
+      console.log('QUERY V10 DB', JSON.stringify({offlineDB: (await Device.find({offline:true})).map(x=>x.id), memory:Array.from(global.offlineDevices), result:devicesState}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
@@ -447,45 +450,60 @@ io.on('connection', async (socket)=>{
 const PORT=process.env.PORT||10000;
 server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
 
+
 global.offlineDevices = global.offlineDevices || new Set();
 global.qCount = global.qCount || {};
 
-app.get('/test/offline', (req,res)=>{
-  res.json({offlineDevices: Array.from(global.offlineDevices), qCount: global.qCount});
+app.get('/test/offline', async (req,res)=>{
+  try{
+    const devs = await Device.find({offline:true});
+    res.json({offlineDevices: devs.map(d=>d.id), fromDB: true, memory: Array.from(global.offlineDevices)});
+  }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices)}); }
 });
-app.get('/test/offline/clear', (req,res)=>{
-  global.offlineDevices = new Set();
-  global.qCount = {};
-  console.log('CLEARED offline + qCount');
-  res.json({success:true, cleared:true, offlineDevices:[]});
+app.get('/test/offline/clear', async (req,res)=>{
+  try{
+    await Device.updateMany({}, {$set:{offline:false}});
+    global.offlineDevices = new Set();
+    global.qCount = {};
+    console.log('CLEARED offline DB + memory');
+    res.json({success:true, cleared:true});
+  }catch(e){ global.offlineDevices=new Set(); res.json({success:true}); }
 });
-app.get('/test/offline/set', (req,res)=>{
-  const id = req.query.id;
-  const onlineParam = req.query.online;
-  if(!id) return res.status(400).json({error:'id required - ?id=DEVICE_ID&online=true/false'});
-  const isOnline = (onlineParam==='true' || onlineParam==='1');
-  if(!isOnline){
-    global.offlineDevices.add(id);
-  } else {
-    global.offlineDevices.delete(id);
-  }
-  global.qCount[id]=0;
-  console.log('SET offline via GET', id, 'online=', isOnline);
-  res.json({success:true, device:id, online:isOnline, offlineDevices:Array.from(global.offlineDevices)});
+app.get('/test/offline/set', async (req,res)=>{
+  try{
+    const id = req.query.id;
+    const onlineParam = req.query.online;
+    if(!id) return res.status(400).json({error:'id required'});
+    const isOnline = (onlineParam==='true' || onlineParam==='1');
+    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
+    if(dev){
+      dev.offline = !isOnline;
+      await dev.save();
+    }
+    if(!isOnline) global.offlineDevices.add(id); else global.offlineDevices.delete(id);
+    global.qCount[id]=0;
+    console.log('SET via GET DB', id, 'online=', isOnline);
+    res.json({success:true, device:id, online:isOnline, offline:!isOnline});
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
-app.post('/test/offline', (req,res)=>{
-  const {deviceId, online} = req.body || {};
-  if(!deviceId) return res.status(400).json({error:'deviceId required'});
-  const isOnline = (online===true || online==='true');
-  if(!isOnline){
-    global.offlineDevices.add(deviceId);
-  } else {
-    global.offlineDevices.delete(deviceId);
-  }
-  global.qCount[deviceId]=0;
-  console.log('SET offline via POST', deviceId, 'online=', isOnline);
-  res.json({success:true, offlineDevices:Array.from(global.offlineDevices)});
+app.post('/test/offline', async (req,res)=>{
+  try{
+    const {deviceId, online} = req.body || {};
+    if(!deviceId) return res.status(400).json({error:'deviceId required'});
+    const isOnline = (online===true || online==='true');
+    const dev = await Device.findOne({id:deviceId}) || await Device.findOne({deviceId:deviceId});
+    if(dev){
+      dev.offline = !isOnline;
+      await dev.save();
+      if(io && dev.userId) io.to('user_'+dev.userId).emit('device_updated', dev);
+    }
+    if(!isOnline) global.offlineDevices.add(deviceId); else global.offlineDevices.delete(deviceId);
+    global.qCount[deviceId]=0;
+    console.log('SET via POST DB', deviceId, 'online=', isOnline, 'offline=', !isOnline);
+    res.json({success:true, device:deviceId, online:isOnline, offline:!isOnline});
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
+
 
 app.post('/google', async (req,res)=>{
   try{
@@ -514,13 +532,16 @@ app.post('/google', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-        if(intent==='action.devices.QUERY'){
+            if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices=await Device.find({userId});
       let devicesState = {};
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-        let isOffline = global.offlineDevices.has(q.id);
+        // Check DB offline first, then memory fallback
+        let isOffline = false;
+        if(d && d.offline===true) isOffline=true;
+        else if(global.offlineDevices.has(q.id)) isOffline=true;
         let online = !isOffline;
         if(!d){
           devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
@@ -539,7 +560,7 @@ app.post('/google', async (req,res)=>{
         }
         devicesState[q.id]=state;
       }
-      console.log('QUERY V9 MANUAL ONLY', JSON.stringify({offline:Array.from(global.offlineDevices), result:devicesState}));
+      console.log('QUERY V10 DB', JSON.stringify({offlineDB: (await Device.find({offline:true})).map(x=>x.id), memory:Array.from(global.offlineDevices), result:devicesState}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
 
