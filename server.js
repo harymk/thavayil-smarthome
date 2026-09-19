@@ -402,6 +402,106 @@ function googleDeviceType(d){
   return 'action.devices.types.SWITCH';
 }
 
+
+// V52: Add alias for Google fulfillment - Google may call /smarthome or /google/smarthome
+app.post('/smarthome', async (req,res)=>{
+  console.log('GOOGLE ALIAS /smarthome called');
+  req.url = '/google/smarthome';
+  // Forward to same logic by re-emitting
+  // Duplicate logic here for safety
+  try{
+    console.log('GOOGLE RAW REQ (alias /smarthome):', JSON.stringify({headers:req.headers.authorization?.substring(0,30), body:req.body}).substring(0,800));
+    const auth=req.headers.authorization; 
+    if(!auth) {
+      console.log('GOOGLE NO AUTH HEADER (alias)');
+      return res.status(401).json({error:'no auth'});
+    }
+    const token=auth.replace('Bearer ','');
+    let decoded; 
+    try{ decoded=verifyToken(token); }
+    catch(e){ 
+      console.log('GOOGLE INVALID TOKEN (alias)', e.message);
+      return res.status(401).json({error:'invalid token'}); 
+    }
+    const userId=decoded.userId;
+    googleTokens[userId]=token;
+    const requestId = req.body.requestId || 'test-123';
+    const intent = req.body.inputs?.[0]?.intent;
+    console.log(`GOOGLE ${intent} (alias) for user ${userId}`);
+    if(intent==='action.devices.SYNC'){
+      try{
+        const userDevices=await Device.find({userId});
+        console.log(`GOOGLE SYNC (alias) found ${userDevices.length} devices for ${userId}`);
+        const devices=userDevices.map(d=>{
+          try{
+            let traits = googleDeviceTraits(d);
+            let attributes = {};
+            if(d.type==='LIGHT'){ attributes.colorModel='hsv'; }
+            if(d.type==='FAN'){
+              attributes.availableFanSpeeds={speeds:[{speed_name:'low',speed_values:[{speed_synonym:['low','1','slow'],lang:'en'}]},{speed_name:'medium',speed_values:[{speed_synonym:['medium','2','3','mid'],lang:'en'}]},{speed_name:'high',speed_values:[{speed_synonym:['high','4','5','max'],lang:'en'}]}],ordered:true};
+              attributes.reversible=false;
+            }
+            return {id:(d.id||d.deviceId||'unknown').toString(), type:googleDeviceType(d), traits, name:{defaultNames:[(d.id||'device')], name:(d.name||'Smart Device'), nicknames:[(d.name||'Smart Device')]}, willReportState:false, attributes, deviceInfo:{manufacturer:'Thavayil Electronics', model:'Thavayil SmartHome v1', hwVersion:'1.0', swVersion:'1.0'}};
+          }catch(e){ return null; }
+        }).filter(Boolean);
+        console.log('GOOGLE SYNC (alias) returning', devices.length, 'devices');
+        return res.json({requestId, payload:{agentUserId:userId, devices}});
+      }catch(e){ console.log('GOOGLE SYNC ERROR (alias)', e.message); return res.json({requestId, payload:{agentUserId:userId, devices:[]}}); }
+    }
+    if(intent==='action.devices.QUERY'){
+      // simplified QUERY for alias
+      try{
+        const payloadDevices = req.body.inputs[0].payload.devices;
+        const userDevices=await Device.find({userId});
+        let devicesState = {};
+        for(const q of payloadDevices){
+          const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
+          let online = true;
+          if(global.offlineDevices.has(q.id)) { global.offlineDevices.delete(q.id); }
+          if(!d){ devicesState[q.id]={online, on:false, status:'SUCCESS'}; continue; }
+          let state = {online, on: d.state==='ON', status:'SUCCESS'};
+          if(d.type==='LIGHT'){
+            const bri = (d.brightness!==undefined)? d.brightness : 100;
+            let h=0,s=0,v=1;
+            if(d.color){ if(d.color.hue!==undefined) h=d.color.hue; if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; } if(d.color.brightness!==undefined) v=d.color.brightness/100; }
+            state.brightness = bri;
+            state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
+          }
+          devicesState[q.id]=state;
+        }
+        return res.json({requestId, payload:{devices:devicesState}});
+      }catch(e){ console.log('QUERY ERROR alias', e.message); return res.status(500).json({error:e.message}); }
+    }
+    if(intent==='action.devices.EXECUTE'){
+      try{
+        const commands = req.body.inputs[0].payload.commands;
+        let states = {};
+        for(const cmd of commands){
+          for(const dev of cmd.devices){
+            const d = await Device.findOne({id:dev.id, userId}) || await Device.findOne({deviceId:dev.id, userId});
+            if(!d) continue;
+            let newState = {online:true};
+            for(const ex of cmd.execution){
+              const params = ex.params;
+              if(ex.command==='action.devices.commands.OnOff'){ d.state=params.on?'ON':'OFF'; newState.on=params.on; }
+              if(ex.command==='action.devices.commands.BrightnessAbsolute'){ d.brightness=params.brightness; if(!d.color) d.color={hue:45,saturation:1,brightness:100}; d.color.brightness=params.brightness; d.state='ON'; newState.brightness=params.brightness; newState.on=true; }
+              if(ex.command==='action.devices.commands.ColorAbsolute' && params.color?.spectrumHSV){
+                const hsv=params.color.spectrumHSV;
+                d.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:d.brightness||100};
+                d.state='ON'; newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.brightness||100)/100}}; newState.on=true;
+              }
+            }
+            await d.save(); await emitDevice(userId, d); states[d.id]=newState;
+          }
+        }
+        return res.json({requestId, payload:{commands:[{ids:Object.keys(states), status:'SUCCESS', states:states}]}});
+      }catch(e){ console.log('EXECUTE ERROR alias', e.message); return res.status(500).json({error:e.message}); }
+    }
+    return res.json({requestId, payload:{}});
+  }catch(e){ console.log('GOOGLE ALIAS ERROR', e.message, e.stack); return res.status(500).json({error:e.message}); }
+});
+
+
 app.post('/google/smarthome', async (req,res)=>{
   try{
     console.log('GOOGLE RAW REQ:', JSON.stringify({headers:req.headers.authorization?.substring(0,20), body:req.body}).substring(0,500));
