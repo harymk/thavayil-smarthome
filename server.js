@@ -426,12 +426,38 @@ app.post('/google/smarthome', async (req,res)=>{
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
         if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 80;
-          const col = d.color || {hue:45, saturation:1, brightness: bri};
+          const bri = (d.brightness!==undefined)? d.brightness : 100;
+          let h = 0, s = 0, v = 1;
+          try{
+            if(d.color){
+              if(d.color.hue!==undefined) h = d.color.hue;
+              if(d.color.saturation!==undefined){
+                s = d.color.saturation;
+                if(s>1) s = s/100;
+              }
+              if(d.color.brightness!==undefined) v = d.color.brightness/100;
+              else if(d.color.value!==undefined) v = d.color.value>1? d.color.value/100 : d.color.value;
+              else if(d.brightness!==undefined) v = d.brightness/100;
+            }
+          }catch(e){}
+          h = Math.round(h)%360;
+          s = Math.max(0, Math.min(1, s));
+          v = Math.max(0, Math.min(1, v));
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+          state.color = { spectrumHsv:{ hue: h, saturation: s, value: v } };
         }
         devicesState[q.id]=state;
+      }
+            for(let k in devicesState){
+        try{
+          if(devicesState[k] && devicesState[k].color){
+            if(devicesState[k].color.spectrumRgb) delete devicesState[k].color.spectrumRgb;
+            if(devicesState[k].color.spectrumHsv){
+              let hsv = devicesState[k].color.spectrumHsv;
+              devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
+            }
+          }
+        }catch(e){}
       }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
@@ -702,12 +728,38 @@ app.post('/google', async (req,res)=>{
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
         if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 80;
-          const col = d.color || {hue:45, saturation:1, brightness: bri};
+          const bri = (d.brightness!==undefined)? d.brightness : 100;
+          let h = 0, s = 0, v = 1;
+          try{
+            if(d.color){
+              if(d.color.hue!==undefined) h = d.color.hue;
+              if(d.color.saturation!==undefined){
+                s = d.color.saturation;
+                if(s>1) s = s/100;
+              }
+              if(d.color.brightness!==undefined) v = d.color.brightness/100;
+              else if(d.color.value!==undefined) v = d.color.value>1? d.color.value/100 : d.color.value;
+              else if(d.brightness!==undefined) v = d.brightness/100;
+            }
+          }catch(e){}
+          h = Math.round(h)%360;
+          s = Math.max(0, Math.min(1, s));
+          v = Math.max(0, Math.min(1, v));
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+          state.color = { spectrumHsv:{ hue: h, saturation: s, value: v } };
         }
         devicesState[q.id]=state;
+      }
+            for(let k in devicesState){
+        try{
+          if(devicesState[k] && devicesState[k].color){
+            if(devicesState[k].color.spectrumRgb) delete devicesState[k].color.spectrumRgb;
+            if(devicesState[k].color.spectrumHsv){
+              let hsv = devicesState[k].color.spectrumHsv;
+              devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
+            }
+          }
+        }catch(e){}
       }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
