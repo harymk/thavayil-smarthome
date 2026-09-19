@@ -352,7 +352,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
     try{ let alexaToken = directive.payload?.scope?.token || directive.endpoint?.scope?.token || token; if(alexaToken) alexaTokens[userId]=alexaToken; }catch(e){}
     if(ns==='Alexa.Authorization' && name==='AcceptGrant') return res.json({event:{header:{namespace:'Alexa.Authorization',name:'AcceptGrant.Response',payloadVersion:'3',messageId:header.messageId},payload:{}}});
     if(ns==='Alexa.Discovery' && name==='Discover'){
-      try{ await OfflineState.deleteMany({}); global.offlineDevices.clear(); }catch(e){}
+      try{ await OfflineState.deleteMany({}); global.offlineDevices.clear(); await Device.updateMany({userId}, {offline:false}); }catch(e){}
       const userDevices=await Device.find({userId});
       const endpoints=userDevices.map(d=>{
         let caps=[{type:'AlexaInterface',interface:'Alexa',version:'3'},{type:'AlexaInterface',interface:'Alexa.PowerController',version:'3',properties:{supported:[{name:'powerState'}],proactivelyReported:true,retrievable:true}}];
@@ -417,8 +417,8 @@ app.post('/smarthome', async (req,res)=>{
     const requestId=req.body.requestId||'test'; const intent=req.body.inputs?.[0]?.intent;
     console.log(`GOOGLE ${intent} (alias) for ${userId}`);
     if(intent==='action.devices.SYNC'){
-      // V56: Clear all offline marks on SYNC - forces Google online
-      try{ await OfflineState.deleteMany({}); global.offlineDevices.clear(); }catch(e){}
+      // V57: Clear ALL offline marks - both collections and Device field
+      try{ await OfflineState.deleteMany({}); global.offlineDevices.clear(); await Device.updateMany({userId}, {offline:false}); console.log('V57 cleared offline flags in DB'); }catch(e){ console.log('clear offline error', e.message); }
 
       const userDevices=await Device.find({userId});
       const devices=userDevices.map(d=>({id:(d.id||d.deviceId).toString(), type:(d.type==='LIGHT'?'action.devices.types.LIGHT':d.type==='FAN'?'action.devices.types.FAN':'action.devices.types.SWITCH'), traits:(d.type==='FAN'?['action.devices.traits.OnOff','action.devices.traits.FanSpeed']:d.type==='LIGHT'?['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting']:['action.devices.traits.OnOff']), name:{defaultNames:[d.id], name:d.name, nicknames:[d.name]}, willReportState:false, attributes:(d.type==='LIGHT'?{colorModel:'hsv'}:{}), deviceInfo:{manufacturer:'Thavayil Electronics', model:'v1', hwVersion:'1.0', swVersion:'1.0'}}));
@@ -482,7 +482,7 @@ app.post('/google/smarthome', async (req,res)=>{
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         // V48 FIX: Force online true for Google Home, ignore stale offline states
-        let online = true; // V56 FORCE ONLINE
+        let online = true; // V57 FORCE ONLINE ALWAYS
         // Only mark offline if device explicitly has offline:true in DB and user set it
         // if(d && d.offline===true) online = false; // Disabled to prevent Google offline bug
         // Clear stale offline sets
@@ -709,7 +709,7 @@ app.post('/google', async (req,res)=>{
       for(const q of payloadDevices){
         const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
         // V48 FIX: Force online true for Google Home, ignore stale offline states
-        let online = true; // V56 FORCE ONLINE
+        let online = true; // V57 FORCE ONLINE ALWAYS
         // Only mark offline if device explicitly has offline:true in DB and user set it
         // if(d && d.offline===true) online = false; // Disabled to prevent Google offline bug
         // Clear stale offline sets
