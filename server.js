@@ -112,19 +112,16 @@ async function sendGoogleReportState(userId, dev){
     }
     if(dev.type==='LIGHT'){
       if(dev.brightness!==undefined) state.brightness = dev.brightness;
-      if(dev.color){
-        const hue = dev.color.hue || 0;
-        let sat = dev.color.saturation;
-        if(sat!==undefined && sat>1) sat = sat/100;
-        if(sat===undefined) sat = 0;
-        let val = 1;
-        if(dev.color.brightness!==undefined) val = dev.color.brightness/100;
-        else if(dev.color.value!==undefined) val = dev.color.value>1? dev.color.value/100 : dev.color.value;
-        // V19: ONLY spectrumHsv, NEVER include spectrumRgb together
-        state.color = { spectrumHsv:{hue: hue, saturation: sat, value: val } };
-      } else {
-        state.color = { spectrumHsv:{hue:0, saturation:0, value:1} };
-      }
+      let h=0,s=0,v=1;
+      try{
+        if(dev.color){
+          if(dev.color.hue!==undefined) h=dev.color.hue;
+          if(dev.color.saturation!==undefined){ s=dev.color.saturation; if(s>1) s=s/100; }
+          if(dev.color.brightness!==undefined) v=dev.color.brightness/100;
+          else if(dev.color.value!==undefined) v=dev.color.value>1? dev.color.value/100 : dev.color.value;
+        }
+      }catch(e){}
+      state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
     }
     lastReportedState[userId][dev.id] = {...state, ts: Date.now() };
     console.log(`ReportState (local) ${dev.id} ->`, JSON.stringify(state));
@@ -427,35 +424,26 @@ app.post('/google/smarthome', async (req,res)=>{
         }
         if(d.type==='LIGHT'){
           const bri = (d.brightness!==undefined)? d.brightness : 100;
-          let h = 0, s = 0, v = 1;
-          try{
-            if(d.color){
-              if(d.color.hue!==undefined) h = d.color.hue;
-              if(d.color.saturation!==undefined){
-                s = d.color.saturation;
-                if(s>1) s = s/100;
-              }
-              if(d.color.brightness!==undefined) v = d.color.brightness/100;
-              else if(d.color.value!==undefined) v = d.color.value>1? d.color.value/100 : d.color.value;
-              else if(d.brightness!==undefined) v = d.brightness/100;
-            }
-          }catch(e){}
-          h = Math.round(h)%360;
-          s = Math.max(0, Math.min(1, s));
-          v = Math.max(0, Math.min(1, v));
+          let h=0,s=0,v=1;
+          if(d.color){
+            if(d.color.hue!==undefined) h=d.color.hue;
+            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+            if(d.color.brightness!==undefined) v=d.color.brightness/100;
+            else if(d.color.value!==undefined) v=d.color.value>1? d.color.value/100 : d.color.value;
+          }
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: h, saturation: s, value: v } };
+          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
         }
         devicesState[q.id]=state;
       }
-            for(let k in devicesState){
+      for(let k in devicesState){
         try{
           if(devicesState[k] && devicesState[k].color){
-            if(devicesState[k].color.spectrumRgb) delete devicesState[k].color.spectrumRgb;
-            if(devicesState[k].color.spectrumHsv){
-              let hsv = devicesState[k].color.spectrumHsv;
-              devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
-            }
+            let hsv = devicesState[k].color.spectrumHsv;
+            if(!hsv) hsv = {hue:0,saturation:0,value:1};
+            if(hsv.saturation>1) hsv.saturation = hsv.saturation/100;
+            if(hsv.value>1) hsv.value = hsv.value/100;
+            devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
           }
         }catch(e){}
       }
@@ -556,72 +544,6 @@ app.get('/test/offline', async (req,res)=>{
     res.json({offlineDevices: merged, db: dbList, memory: memList, source:'V12 DB collection'});
   }catch(e){ res.json({offlineDevices: Array.from(global.offlineDevices), error:e.message}); }
 });
-
-app.get('/test/fix-color', async (req,res)=>{
-  try{
-    const id = req.query.id;
-    let filter = {};
-    if(id) filter = {id:id};
-    else filter = {type:'LIGHT'};
-    const devices = await Device.find(filter);
-    let fixed = [];
-    for(let dev of devices){
-      try{
-        if(dev.color){
-          // Remove spectrumRgb field if exists at top level or nested
-          if(dev.color.spectrumRgb!==undefined){
-            delete dev.color.spectrumRgb;
-            dev.markModified('color');
-          }
-          // If color has spectrumHsv.spectrumRgb or similar
-          if(dev.color.color && dev.color.color.spectrumRgb){
-            delete dev.color.color.spectrumRgb;
-            dev.markModified('color');
-          }
-          // Ensure color is clean object with only hue, saturation, brightness/value
-          let clean = {};
-          if(dev.color.hue!==undefined) clean.hue = dev.color.hue;
-          if(dev.color.saturation!==undefined) clean.saturation = dev.color.saturation>1? dev.color.saturation/100 : dev.color.saturation;
-          if(dev.color.brightness!==undefined) clean.brightness = dev.color.brightness;
-          else if(dev.color.value!==undefined) clean.value = dev.color.value>1? dev.color.value/100 : dev.color.value;
-          else clean.brightness = 100;
-          // Preserve hue if missing
-          if(clean.hue===undefined) clean.hue = 0;
-          if(clean.saturation===undefined) clean.saturation = 0;
-          dev.color = clean;
-          dev.markModified('color');
-          await dev.save();
-          fixed.push({id: dev.id, color: dev.color});
-          // Force report with clean color
-          dev._forceOnline = true;
-          await sendGoogleReportState(dev.userId, dev);
-        }
-      }catch(e){ console.log('fix err', dev.id, e.message); }
-    }
-    res.json({success:true, fixed:fixed, message: 'Removed spectrumRgb, now only spectrumHsv will be sent'});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.get('/test/query', async (req,res)=>{
-  try{
-    const id = req.query.id;
-    if(!id) return res.status(400).json({error:'id required'});
-    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    if(!dev) return res.status(404).json({error:'not found'});
-    let state = { online: true, on: dev.state==='ON' };
-    if(dev.brightness!==undefined) state.brightness = dev.brightness;
-    if(dev.type==='LIGHT'){
-      let h = dev.color?.hue||0;
-      let s = dev.color?.saturation||0;
-      if(s>1) s=s/100;
-      let v = dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
-      state.color = {spectrumHsv:{hue:h, saturation:s, value:v}};
-    }
-    res.json({deviceId:id, queryState: state, rawColor: dev.color});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
-
 app.get('/test/offline/clear', async (req,res)=>{
   try{
     await OfflineState.deleteMany({});
@@ -729,35 +651,26 @@ app.post('/google', async (req,res)=>{
         }
         if(d.type==='LIGHT'){
           const bri = (d.brightness!==undefined)? d.brightness : 100;
-          let h = 0, s = 0, v = 1;
-          try{
-            if(d.color){
-              if(d.color.hue!==undefined) h = d.color.hue;
-              if(d.color.saturation!==undefined){
-                s = d.color.saturation;
-                if(s>1) s = s/100;
-              }
-              if(d.color.brightness!==undefined) v = d.color.brightness/100;
-              else if(d.color.value!==undefined) v = d.color.value>1? d.color.value/100 : d.color.value;
-              else if(d.brightness!==undefined) v = d.brightness/100;
-            }
-          }catch(e){}
-          h = Math.round(h)%360;
-          s = Math.max(0, Math.min(1, s));
-          v = Math.max(0, Math.min(1, v));
+          let h=0,s=0,v=1;
+          if(d.color){
+            if(d.color.hue!==undefined) h=d.color.hue;
+            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+            if(d.color.brightness!==undefined) v=d.color.brightness/100;
+            else if(d.color.value!==undefined) v=d.color.value>1? d.color.value/100 : d.color.value;
+          }
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: h, saturation: s, value: v } };
+          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
         }
         devicesState[q.id]=state;
       }
-            for(let k in devicesState){
+      for(let k in devicesState){
         try{
           if(devicesState[k] && devicesState[k].color){
-            if(devicesState[k].color.spectrumRgb) delete devicesState[k].color.spectrumRgb;
-            if(devicesState[k].color.spectrumHsv){
-              let hsv = devicesState[k].color.spectrumHsv;
-              devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
-            }
+            let hsv = devicesState[k].color.spectrumHsv;
+            if(!hsv) hsv = {hue:0,saturation:0,value:1};
+            if(hsv.saturation>1) hsv.saturation = hsv.saturation/100;
+            if(hsv.value>1) hsv.value = hsv.value/100;
+            devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
           }
         }catch(e){}
       }
