@@ -112,7 +112,14 @@ async function sendGoogleReportState(userId, dev){
     }
     if(dev.type==='LIGHT'){
       if(dev.brightness!==undefined) state.brightness = dev.brightness;
-      if(dev.color) state.color = { spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:(dev.color.brightness||100)/100 }};
+      if(dev.color){
+        const hue = dev.color.hue || 0;
+        const sat = dev.color.saturation !== undefined ? (dev.color.saturation>1? dev.color.saturation/100 : dev.color.saturation) : 0;
+        const val = dev.color.brightness !== undefined ? dev.color.brightness/100 : (dev.color.value!==undefined? dev.color.value : 1);
+        state.color = { spectrumHsv:{hue: hue, saturation: sat, value: val } };
+      } else {
+        state.color = { spectrumHsv:{hue:0, saturation:0, value:1} };
+      }
     }
     lastReportedState[userId][dev.id] = {...state, ts: Date.now() };
     console.log(`ReportState (local) ${dev.id} ->`, JSON.stringify(state));
