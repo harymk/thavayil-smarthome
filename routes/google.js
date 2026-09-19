@@ -1,15 +1,12 @@
-// routes/google.js - V65 FIX - Separate brightness + fan + attributes fix
+
 const express = require('express');
 const Device = require('../models/Device');
 const OfflineState = require('../models/OfflineState');
 const { verifyToken } = require('../utils/auth');
 const router = express.Router();
-
 let offlineDevices = global.offlineDevices || new Set();
-
 async function googleHandler(req,res){
   try{
-    console.log('GOOGLE REQ', req.path, JSON.stringify(req.body).substring(0,500));
     const auth = req.headers.authorization;
     if(!auth) return res.status(401).json({error:'no auth'});
     const token = auth.replace('Bearer ','');
@@ -18,7 +15,6 @@ async function googleHandler(req,res){
     const requestId = req.body.requestId || 'test';
     const intent = req.body.inputs?.[0]?.intent;
     console.log(`GOOGLE ${intent} for ${userId}`);
-
     if(intent==='action.devices.SYNC'){
       try{ await OfflineState.deleteMany({}); offlineDevices.clear(); await Device.updateMany({userId}, {offline:false}); }catch(e){}
       const userDevices = await Device.find({userId});
@@ -32,7 +28,6 @@ async function googleHandler(req,res){
       });
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
-
     if(intent==='action.devices.QUERY'){
       const payloadDevices = req.body.inputs[0].payload.devices;
       const userDevices = await Device.find({userId});
@@ -45,8 +40,7 @@ async function googleHandler(req,res){
         if(d.type==='LIGHT'){
           const bri = d.brightness||100;
           const colorBri = d.color?.brightness||100;
-          let h=d.color?.hue||45, sat=d.color?.saturation||1;
-          if(sat>1) sat=sat/100;
+          let h=d.color?.hue||45, sat=d.color?.saturation||1; if(sat>1) sat=sat/100;
           s.brightness=bri;
           s.color={spectrumHsv:{hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,sat)), value:colorBri/100}};
         }
@@ -54,7 +48,6 @@ async function googleHandler(req,res){
       }
       return res.json({requestId, payload:{devices:states}});
     }
-
     if(intent==='action.devices.EXECUTE'){
       const commands = req.body.inputs[0].payload.commands;
       let outStates = {};
@@ -66,32 +59,22 @@ async function googleHandler(req,res){
           for(const ex of cmd.execution){
             const p = ex.params;
             if(ex.command==='action.devices.commands.OnOff'){ d.state=p.on?'ON':'OFF'; ns.on=p.on; }
-            // V65 SEPARATE: Brightness does NOT touch color
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ 
-              const b=Math.max(5,Math.min(100, parseInt(p.brightness))); 
-              d.brightness=b; 
-              if(!d.color) d.color={hue:45,saturation:1,brightness:100}; 
-              d.state='ON'; ns.brightness=b; ns.on=true; 
-            }
-            // V65 SEPARATE: Color does NOT touch brightness
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:100}; d.state='ON'; ns.brightness=b; ns.on=true; }
             if(ex.command==='action.devices.commands.ColorAbsolute' && p.color?.spectrumHSV){
               const hsv=p.color.spectrumHSV;
               if(!d.color) d.color={hue:45, saturation:1, brightness:100};
               d.color.hue=Math.round(hsv.hue)%360;
               let s=parseFloat(hsv.saturation); if(s>1) s=s/100; d.color.saturation=Math.max(0,Math.min(1,s));
-              d.state='ON'; 
-              const colorBri=d.color.brightness||100;
-              ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:colorBri/100}}; 
-              ns.on=true;
+              d.state='ON'; const colorBri=d.color.brightness||100;
+              ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:colorBri/100}}; ns.on=true;
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){
-              if(p.fanSpeed){ const mapStr={low:2, 'low 1':1, 'low 2':2, medium:3, 'medium low':2, 'medium high':4, high:5}; d.speed=mapStr[p.fanSpeed.toLowerCase()]||3; d.state='ON'; ns.currentFanSpeedSetting=p.fanSpeed; ns.on=true; }
+              if(p.fanSpeed){ const mapStr={low:2, medium:3, high:5}; d.speed=mapStr[p.fanSpeed.toLowerCase()]||3; d.state='ON'; ns.currentFanSpeedSetting=p.fanSpeed; ns.on=true; }
               else if(p.fanSpeedPercent!==undefined){ const pct=parseInt(p.fanSpeedPercent); let s=1; if(pct<=20) s=1; else if(pct<=40) s=2; else if(pct<=60) s=3; else if(pct<=80) s=4; else s=5; d.speed=s; d.state='ON'; const revMap={1:'low',2:'low',3:'medium',4:'high',5:'high'}; ns.currentFanSpeedSetting=revMap[s]; ns.on=true; }
             }
           }
           d.offline=false; await d.save();
           if(global.io) global.io.to('user_'+userId).emit('device_updated', d);
-          if(global.io) global.io.emit('device_updated', d);
           outStates[d.id]=ns;
         }
       }
@@ -100,9 +83,7 @@ async function googleHandler(req,res){
     return res.json({requestId, payload:{}});
   }catch(e){ console.log('GOOGLE ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
 }
-
 router.post('/smarthome', googleHandler);
 router.post('/google/smarthome', googleHandler);
 router.post('/', googleHandler);
-
 module.exports = router;
