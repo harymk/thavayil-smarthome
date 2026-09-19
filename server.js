@@ -6,9 +6,6 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const app = express();
-const SERVER_VER='V33_SYNC_OAUTH_FIX'; console.log('*** VERSION',SERVER_VER,'***');
-app.get('/test/version',(req,res)=> res.json({version:SERVER_VER}));
-app.get('/test/oauth',(req,res)=> res.json({version:SERVER_VER, ok:true}));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
@@ -227,17 +224,17 @@ app.post('/oauth/authorize', async (req,res)=>{
 });
 app.post('/oauth/token', async (req,res)=>{
   try{
-    console.log('OAUTH TOKEN REQ:', req.body.grant_type, req.body.code ? 'has_code' : 'no_code', req.body.refresh_token ? 'has_refresh' : 'no_refresh');
+    console.log('OAUTH TOKEN REQ:', req.body.grant_type, 'code?', !!req.body.code, 'refresh?', !!req.body.refresh_token);
     let userId = null;
     if(req.body.code){
       const entry=await Code.findOne({code:req.body.code});
       if(entry) userId = entry.userId;
     }
     if(!userId && req.body.refresh_token){
-      try{ const dec = jwt.verify(req.body.refresh_token, JWT_SECRET_NEW); userId = dec.userId; }catch(e){ try{ userId = jwt.decode(req.body.refresh_token)?.userId; }catch(e2){} }
+      try{ const dec = require('jsonwebtoken').verify(req.body.refresh_token, JWT_SECRET_NEW); userId = dec.userId; }catch(e){ try{ userId = require('jsonwebtoken').decode(req.body.refresh_token)?.userId; }catch(e2){} }
     }
     if(!userId) return res.status(400).json({error:'invalid_grant'});
-    const token=jwt.sign({userId:userId}, JWT_SECRET_NEW, {noTimestamp:true});
+    const token=require('jsonwebtoken').sign({userId:userId}, JWT_SECRET_NEW, {noTimestamp:true});
     console.log('OAUTH TOKEN OK for', userId);
     res.json({access_token:token, refresh_token:token, token_type:'Bearer', expires_in:31536000});
   }catch(e){ console.log('TOKEN ERROR', e.message); res.status(500).json({error:e.message}); }
@@ -431,20 +428,14 @@ app.post('/google/smarthome', async (req,res)=>{
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-                if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 100;
-          let h=0,s=0,v=1;
-          if(d.color){
-            if(d.color.hue!==undefined) h=d.color.hue;
-            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-            if(d.color.brightness!==undefined) v=d.color.brightness/100;
-          }
+        if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 80;
+          const col = d.color || {hue:45, saturation:1, brightness: bri};
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
+          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
         }
         devicesState[q.id]=state;
       }
-      for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
@@ -525,6 +516,92 @@ io.on('connection', async (socket)=>{
 });
 
 const PORT=process.env.PORT||10000;
+
+// V34: Alias all possible fulfillment paths to same handler
+async function handleGoogleSmarthome(req,res){
+  try{
+    const auth=req.headers.authorization;
+    if(!auth) { console.log('SMARTHOME NO AUTH'); return res.status(401).json({error:'no auth'}); }
+    const token=auth.replace('Bearer ','');
+    let decoded;
+    try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_NEW); }catch(e){ try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_OLD); }catch(e2){ decoded=require('jsonwebtoken').decode(token); } }
+    const userId = decoded?.userId || token;
+    const requestId = req.body.requestId;
+    const input = req.body.inputs?.[0];
+    const intent = input?.intent;
+    console.log(`=== GOOGLE ${intent} for user ${userId} ===`);
+    console.log('RequestId:', requestId, 'Input:', JSON.stringify(input).slice(0,500));
+
+    if(intent==='action.devices.SYNC'){
+      const userDevices=await Device.find({userId});
+      console.log('SYNC found devices:', userDevices.length);
+      const devices=userDevices.map(d=>{
+        let traits=[];
+        let type='action.devices.types.SWITCH';
+        let attrs={};
+        if(d.type==='LIGHT'){ traits=['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting']; type='action.devices.types.LIGHT'; attrs={colorModel:'hsv', colorTemperatureRange:{temperatureMinK:2000, temperatureMaxK:9000}}; }
+        else if(d.type==='FAN'){ traits=['action.devices.traits.OnOff','action.devices.traits.FanSpeed']; type='action.devices.types.FAN'; attrs={availableFanSpeeds:{speeds:[{speed_name:'low',speed_values:[{speed_synonym:['low'],lang:'en'}]},{speed_name:'medium',speed_values:[{speed_synonym:['medium'],lang:'en'}]},{speed_name:'high',speed_values:[{speed_synonym:['high'],lang:'en'}]}],ordered:true}}; }
+        else { traits=['action.devices.traits.OnOff']; }
+        return {id: d.id, type, traits, name:{name: d.name||d.id, defaultNames:[d.name||d.id], nicknames:[d.name||d.id]}, willReportState:true, attributes:attrs, deviceInfo:{manufacturer:'Thavayil', model:'v1', hwVersion:'1', swVersion:'1'}};
+      });
+      console.log('SYNC RETURNING:', devices.length, JSON.stringify(devices).slice(0,1500));
+      return res.json({requestId, payload:{agentUserId:userId, devices}});
+    }
+    if(intent==='action.devices.QUERY'){
+      const devicesState={};
+      const userDevices=await Device.find({userId});
+      for(let d of userDevices){
+        let state={online:true, on: d.state==='ON', status:'SUCCESS'};
+        if(d.type==='FAN'){ state.currentFanSpeedSetting = d.speed||'low'; }
+        if(d.type==='LIGHT'){
+          const bri = d.brightness!==undefined ? d.brightness : 100;
+          let h=0,s=0,v=1;
+          if(d.color){ if(d.color.hue!==undefined) h=d.color.hue; if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; } if(d.color.brightness!==undefined) v=d.color.brightness/100; }
+          state.brightness = bri;
+          state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
+        }
+        if(d.type!=='LIGHT') state.on = d.state==='ON';
+        // Guard: ensure only Hsv
+        if(state.color && state.color.spectrumHsv){
+          let hsv=state.color.spectrumHsv;
+          state.color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } };
+        }
+        devicesState[d.id]=state;
+      }
+      console.log('QUERY RETURNING:', JSON.stringify(devicesState).slice(0,1000));
+      return res.json({requestId, payload:{devices:devicesState}});
+    }
+    if(intent==='action.devices.EXECUTE'){
+      // Simplified execute
+      const commands = input.payload.commands;
+      const results=[];
+      for(let cmd of commands){
+        for(let devInfo of cmd.devices){
+          const id=devInfo.id;
+          const d=await Device.findOne({id:id, userId:userId}) || await Device.findOne({id:id});
+          if(!d) continue;
+          let newState={};
+          for(let ex of cmd.execution){
+            if(ex.command==='action.devices.commands.OnOff'){ d.state=ex.params.on?'ON':'OFF'; newState.on=ex.params.on; }
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ d.brightness=ex.params.brightness; newState.brightness=ex.params.brightness; }
+            if(ex.command==='action.devices.commands.ColorAbsolute' && ex.params.color?.spectrumHSV){ const hsv=ex.params.color.spectrumHSV; d.color={hue:Math.round(hsv.hue), saturation:hsv.saturation, brightness:Math.round(hsv.value*100)}; newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:hsv.value}}; }
+          }
+          await d.save();
+          results.push({ids:[id], status:'SUCCESS', states:newState});
+        }
+      }
+      return res.json({requestId, payload:{commands:results}});
+    }
+  }catch(e){ console.log('SMARTHOME ERROR', e.message, e.stack); res.status(500).json({error:e.message}); }
+}
+app.post('/smarthome', handleGoogleSmarthome);
+app.post('/fulfillment', handleGoogleSmarthome);
+app.post('/google-home', handleGoogleSmarthome);
+
+const SERVER_VER='V34_ALIAS_OAUTH_RGB';
+console.log('*** VERSION', SERVER_VER, '***');
+app.get('/test/version',(req,res)=> res.json({version:SERVER_VER, paths:['/smarthome','/google/smarthome','/fulfillment']}));
+
 server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
 
 
@@ -647,20 +724,14 @@ app.post('/google', async (req,res)=>{
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-                if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 100;
-          let h=0,s=0,v=1;
-          if(d.color){
-            if(d.color.hue!==undefined) h=d.color.hue;
-            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-            if(d.color.brightness!==undefined) v=d.color.brightness/100;
-          }
+        if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 80;
+          const col = d.color || {hue:45, saturation:1, brightness: bri};
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
+          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
         }
         devicesState[q.id]=state;
       }
-      for(let k in devicesState){ try{ if(devicesState[k] && devicesState[k].color && devicesState[k].color.spectrumHsv){ let hsv=devicesState[k].color.spectrumHsv; devicesState[k].color={ spectrumHsv:{ hue:hsv.hue||0, saturation:hsv.saturation||0, value:hsv.value||1 } }; } }catch(e){} }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
     }
