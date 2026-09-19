@@ -291,7 +291,7 @@ app.post('/api/device/control', authMiddleware, async (req,res)=>{
     if(dev){
       if(action==='TurnOn') dev.state='ON';
       if(action==='TurnOff') dev.state='OFF';
-      if(color&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; if(color.hue!==undefined) dev.color.hue=color.hue; if(color.saturation!==undefined) dev.color.saturation=color.saturation; /* V44: keep brightness independent */ dev.state='ON'; }
+      if(color&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; if(color.hue!==undefined) dev.color.hue=color.hue; if(color.saturation!==undefined) dev.color.saturation=color.saturation; dev.state='ON'; /* V46 separate */ }
       if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); dev.state='ON'; }
       if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
       await dev.save(); await emitDevice(req.user.userId, dev);
@@ -334,7 +334,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
     }
     if(ns==='Alexa.ColorController' && name==='SetColor'){
       const endpointId=directive.endpoint.endpointId; const color=directive.payload.color; let h=Math.round(color.hue); let s=parseFloat(color.saturation); let b=Math.round((color.brightness||1)*100);
-      let dev=await Device.findOne({id:endpointId, userId}); if(dev){ dev.state='ON'; dev.color={hue:h,saturation:s,brightness:b}; dev.brightness=b; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetColor',color:{hue:h,saturation:s,brightness:b}}); }
+      let dev=await Device.findOne({id:endpointId, userId}); if(dev){ dev.state='ON'; dev.color={hue:h,saturation:s,brightness:dev.brightness||100}; /* V46 separate */ await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetColor',color:{hue:h,saturation:s,brightness:b}}); }
       return res.json({event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},context:{properties:[{namespace:'Alexa.ColorController',name:'color',value:{hue:h,saturation:s,brightness:color.brightness},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}});
     }
     if(ns==='Alexa.PercentageController'){
@@ -479,8 +479,7 @@ app.post('/google/smarthome', async (req,res)=>{
             }
             if(ex.command==='action.devices.commands.ColorAbsolute' && params.color?.spectrumHSV){
               const hsv=params.color.spectrumHSV;
-              dev.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:Math.round(hsv.value*100)};
-              // V44 no link: dev.brightness kept;
+              dev.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:dev.brightness||100}; /* V46 */
               dev.state='ON';
               newState.on = true;
               newState.color = {spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:hsv.value}};
@@ -632,8 +631,7 @@ app.post('/google/smarthome', async (req,res)=>{
               if(hsv){
                 // V40 FIX: Don't auto-adjust brightness when color changes
                 // Keep brightness trait separate from color value
-                const colorBrightness = Math.round(Math.max(0,Math.min(1,hsv.value))*100);
-                d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1,hsv.saturation)), brightness:colorBrightness};
+                d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1,hsv.saturation)), brightness:d.brightness||100}; /* V46 */
                 d.state='ON';
                 // Only update color, NOT brightness trait - brightness stays as user set it
                 newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.brightness||100)/100}}; // V41: value = brightness/100 to prevent jump
@@ -666,7 +664,7 @@ app.post('/smarthome', (req,res)=>{
 });
 
 
-app.get('/test/version', (req,res)=> res.json({version:'V44_ICON_COLOR_SEPARATE', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V46_COLOR_SEPARATE_FINAL', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id||'1875336409';
