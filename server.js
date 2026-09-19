@@ -352,8 +352,13 @@ app.post('/google/smarthome', async (req,res)=>{
           const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
-        if(d.type==='LIGHT' && d.brightness!==undefined) state.brightness = d.brightness;
-        if(d.type==='LIGHT' && d.color){ state.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.color.brightness||100)/100}}; }
+        if(d.type==='LIGHT'){
+          // FIX: Always return brightness + color for ColorSetting trait, even when OFF or no color in DB
+          const bri = (d.brightness!==undefined)? d.brightness : 80;
+          const col = d.color || {hue:45, saturation:1, brightness: bri};
+          state.brightness = bri;
+          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+        }
         devicesState[q.id]=state;
       }
       return res.json({requestId, payload:{devices:devicesState}});
@@ -378,7 +383,12 @@ app.post('/google/smarthome', async (req,res)=>{
                 const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
                 newState.currentFanSpeedSetting = map[dev.speed] || 'medium';
               }
-              if(dev.type==='LIGHT' && dev.brightness!==undefined) newState.brightness = dev.brightness;
+              if(dev.type==='LIGHT'){
+                const bri = (dev.brightness!==undefined)? dev.brightness : 80;
+                const col = dev.color || {hue:45, saturation:1, brightness: bri};
+                newState.brightness = bri;
+                newState.color = { spectrumHsv:{ hue: col.hue||45, saturation: col.saturation||1, value: (col.brightness||bri)/100 } };
+              }
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               const mapStr = {low:1, medium:3, high:5};
