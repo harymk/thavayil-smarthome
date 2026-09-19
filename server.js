@@ -291,7 +291,7 @@ app.post('/api/device/control', authMiddleware, async (req,res)=>{
     if(dev){
       if(action==='TurnOn') dev.state='ON';
       if(action==='TurnOff') dev.state='OFF';
-      if(color&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.hue=color.hue!==undefined?color.hue:dev.color.hue; dev.color.saturation=color.saturation!==undefined?color.saturation:dev.color.saturation; if(color.brightness!==undefined && color.hue===undefined){ dev.color.brightness=color.brightness; dev.brightness=color.brightness; } dev.state='ON'; }
+      if(color&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; if(color.hue!==undefined) dev.color.hue=color.hue; if(color.saturation!==undefined) dev.color.saturation=color.saturation; /* V44: keep brightness independent */ dev.state='ON'; }
       if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); dev.state='ON'; }
       if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
       await dev.save(); await emitDevice(req.user.userId, dev);
@@ -480,7 +480,7 @@ app.post('/google/smarthome', async (req,res)=>{
             if(ex.command==='action.devices.commands.ColorAbsolute' && params.color?.spectrumHSV){
               const hsv=params.color.spectrumHSV;
               dev.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:Math.round(hsv.value*100)};
-              dev.brightness=dev.color.brightness;
+              // V44 no link: dev.brightness kept;
               dev.state='ON';
               newState.on = true;
               newState.color = {spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:hsv.value}};
@@ -666,7 +666,7 @@ app.post('/smarthome', (req,res)=>{
 });
 
 
-app.get('/test/version', (req,res)=> res.json({version:'V43_WEB_DASHBOARD_COLOR_FIX', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
+app.get('/test/version', (req,res)=> res.json({version:'V44_ICON_COLOR_SEPARATE', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
 app.get('/test/query', async (req,res)=>{
   try{
     const id=req.query.id||'1875336409';
