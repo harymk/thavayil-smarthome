@@ -436,3 +436,183 @@ io.on('connection', async (socket)=>{
 
 const PORT=process.env.PORT||10000;
 server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
+
+global.offlineDevices = global.offlineDevices || new Set();
+global.qCount = global.qCount || {};
+
+app.get('/test/offline', (req,res)=>{
+  res.json({offlineDevices: Array.from(global.offlineDevices), qCount: global.qCount});
+});
+app.get('/test/offline/clear', (req,res)=>{
+  global.offlineDevices = new Set();
+  global.qCount = {};
+  console.log('CLEARED offline + qCount');
+  res.json({success:true, cleared:true, offlineDevices:[]});
+});
+app.get('/test/offline/set', (req,res)=>{
+  const id = req.query.id;
+  const onlineParam = req.query.online;
+  if(!id) return res.status(400).json({error:'id required - ?id=DEVICE_ID&online=true/false'});
+  const isOnline = (onlineParam==='true' || onlineParam==='1');
+  if(!isOnline){
+    global.offlineDevices.add(id);
+  } else {
+    global.offlineDevices.delete(id);
+  }
+  global.qCount[id]=0;
+  console.log('SET offline via GET', id, 'online=', isOnline);
+  res.json({success:true, device:id, online:isOnline, offlineDevices:Array.from(global.offlineDevices)});
+});
+app.post('/test/offline', (req,res)=>{
+  const {deviceId, online} = req.body || {};
+  if(!deviceId) return res.status(400).json({error:'deviceId required'});
+  const isOnline = (online===true || online==='true');
+  if(!isOnline){
+    global.offlineDevices.add(deviceId);
+  } else {
+    global.offlineDevices.delete(deviceId);
+  }
+  global.qCount[deviceId]=0;
+  console.log('SET offline via POST', deviceId, 'online=', isOnline);
+  res.json({success:true, offlineDevices:Array.from(global.offlineDevices)});
+});
+
+app.post('/google', async (req,res)=>{
+  try{
+    const accessToken = (req.headers.authorization||'').replace('Bearer ','');
+    let userId=null;
+    if(accessToken){
+      try{ const decoded=jwt.verify(accessToken, JWT_SECRET); userId=decoded.id; }catch(e){
+        const tokenDoc = await Token.findOne({accessToken}); if(tokenDoc) userId=tokenDoc.userId;
+      }
+    }
+    if(!userId) return res.status(401).json({error:'auth'});
+    const requestId = req.body.requestId;
+    const intent = req.body.inputs[0].intent;
+
+    if(intent==='action.devices.SYNC'){
+      const userDevices=await Device.find({userId});
+      const devices=userDevices.map(d=>{
+        let traits=[];
+        let type='action.devices.types.SWITCH';
+        let attrs={};
+        if(d.type==='LIGHT'){ traits=['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting']; type='action.devices.types.LIGHT'; attrs={colorModel:'hsv', colorTemperatureRange:{temperatureMinK:2000, temperatureMaxK:9000}}; }
+        else if(d.type==='FAN'){ traits=['action.devices.traits.OnOff','action.devices.traits.FanSpeed']; type='action.devices.types.FAN'; attrs={availableFanSpeeds:{speeds:[{speed_name:'low',speed_values:[{speed_synonym:['low','slow'],lang:'en'}]},{speed_name:'medium',speed_values:[{speed_synonym:['medium'],lang:'en'}]},{speed_name:'high',speed_values:[{speed_synonym:['high','fast'],lang:'en'}]}]},ordered:true,reversible:false}; }
+        else { traits=['action.devices.traits.OnOff']; type='action.devices.types.SWITCH'; }
+        return {id:d.id, type:type, traits:traits, name:{defaultNames:[d.name], name:d.name, nicknames:[d.name]}, willReportState:false, attributes:attrs, deviceInfo:{manufacturer:'Thavayil', model:'Smart', hwVersion:'1.0', swVersion:'1.0'}, customData:{deviceId:d.id}};
+      });
+      return res.json({requestId, payload:{agentUserId:userId, devices}});
+    }
+
+    if(intent==='action.devices.QUERY'){
+      const payloadDevices = req.body.inputs[0].payload.devices;
+      const userDevices=await Device.find({userId});
+      let devicesState = {};
+      for(const q of payloadDevices){
+        const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
+        let isManualOffline = global.offlineDevices.has(q.id);
+        let online = true;
+        if(payloadDevices.length===1){
+          if(!global.qCount[q.id]) global.qCount[q.id]=0;
+          if(isManualOffline){
+            online=false;
+          } else {
+            global.qCount[q.id]++;
+            if(global.qCount[q.id]===1) online=true;
+            else if(global.qCount[q.id]===2) online=false;
+            else { online=true; global.qCount[q.id]=0; }
+          }
+        } else {
+          online = !isManualOffline;
+        }
+        if(!d){
+          devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
+          continue;
+        }
+        let state = {online:online, on: d.state==='ON', status:'SUCCESS'};
+        if(d.type==='FAN'){
+          const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
+          state.currentFanSpeedSetting = map[d.speed] || 'medium';
+        }
+        if(d.type==='LIGHT'){
+          const bri = (d.brightness!==undefined)? d.brightness : 80;
+          const col = d.color || {hue:45, saturation:1, brightness: bri};
+          state.brightness = bri;
+          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+        }
+        devicesState[q.id]=state;
+      }
+      console.log('QUERY V8', JSON.stringify({qCount:global.qCount, offline:Array.from(global.offlineDevices)}));
+      return res.json({requestId, payload:{devices:devicesState}});
+    }
+
+    if(intent==='action.devices.EXECUTE'){
+      const commands = req.body.inputs[0].payload.commands;
+      let results=[];
+      for(const cmd of commands){
+        for(const device of cmd.devices){
+          const dev = await Device.findOne({id:device.id, userId}) || await Device.findOne({deviceId:device.id, userId});
+          if(!dev){ results.push({ids:[device.id], status:'ERROR', errorCode:'deviceNotFound'}); continue; }
+          let newState = {online:true};
+          for(const ex of cmd.execution){
+            const params = ex.params;
+            if(ex.command==='action.devices.commands.OnOff'){
+              dev.state = params.on? 'ON' : 'OFF';
+              newState.on = params.on;
+              if(dev.type==='FAN'){
+                if(params.on && !dev.speed) dev.speed = 3;
+                const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
+                newState.currentFanSpeedSetting = map[dev.speed] || 'medium';
+              }
+              if(dev.type==='LIGHT'){
+                const bri = (dev.brightness!==undefined)? dev.brightness : 80;
+                const col = dev.color || {hue:45, saturation:1, brightness: bri};
+                newState.brightness = bri;
+                newState.color = { spectrumHsv:{ hue: col.hue||45, saturation: col.saturation||1, value: (col.brightness||bri)/100 } };
+              }
+            }
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){
+              dev.brightness=params.brightness;
+              if(dev.color) dev.color.brightness=params.brightness;
+              newState.brightness=params.brightness;
+              newState.on = dev.state==='ON';
+              if(dev.color){
+                newState.color={ spectrumHsv:{ hue: dev.color.hue||45, saturation: dev.color.saturation||1, value: params.brightness/100 } };
+              }
+            }
+            if(ex.command==='action.devices.commands.ColorAbsolute'){
+              if(params.color && params.color.spectrumHsv){
+                const hsv=params.color.spectrumHsv;
+                dev.color={hue:hsv.hue, saturation:hsv.saturation, brightness: (hsv.value*100)};
+                dev.brightness=Math.round(hsv.value*100);
+                newState.color={spectrumHsv:hsv};
+                newState.brightness=dev.brightness;
+                newState.on=true; dev.state='ON';
+              }
+            }
+            if(ex.command==='action.devices.commands.SetFanSpeed'){
+              const speedMap={'low':2,'medium':3,'high':5};
+              dev.speed=speedMap[params.fanSpeed]||3;
+              dev.state='ON';
+              newState.on=true;
+              newState.currentFanSpeedSetting=params.fanSpeed;
+            }
+          }
+          await dev.save();
+          if(io) io.to('user_'+userId).emit('device_updated', dev);
+          results.push({ids:[device.id], status:'SUCCESS', states:newState});
+        }
+      }
+      return res.json({requestId, payload:{commands:results}});
+    }
+
+    if(intent==='action.devices.DISCONNECT'){
+      return res.json({requestId, payload:{}});
+    }
+
+    return res.json({requestId, payload:{}});
+  }catch(err){
+    console.error('Google error', err);
+    return res.status(500).json({error:err.message});
+  }
+});
