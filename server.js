@@ -196,7 +196,7 @@ async function googleHandler(req,res){
         let attrs = {};
         if(d.type==='LIGHT') attrs.colorModel='hsv';
         if(d.type==='FAN') attrs.availableFanSpeeds={speeds:[{speed_name:'low',speed_values:[{speed_synonym:['low','1'],lang:'en'}]},{speed_name:'medium',speed_values:[{speed_synonym:['medium','2'],lang:'en'}]},{speed_name:'high',speed_values:[{speed_synonym:['high','3'],lang:'en'}]}],ordered:true};
-        return {id:(d.id||d.deviceId).toString(), type:d.type==='LIGHT'?'action.devices.types.LIGHT':d.type==='FAN'?'action.devices.types.FAN':'action.devices.types.SWITCH', traits, name:{defaultNames:[d.id], name:d.name, nicknames:[d.name]}, willReportState:false, attributes, deviceInfo:{manufacturer:'Thavayil Electronics', model:'v1', hwVersion:'1.0', swVersion:'1.0'}};
+        return {id:(d.id||d.deviceId).toString(), type:d.type==='LIGHT'?'action.devices.types.LIGHT':d.type==='FAN'?'action.devices.types.FAN':'action.devices.types.SWITCH', traits, name:{defaultNames:[d.id], name:d.name, nicknames:[d.name]}, willReportState:false, attributes:attrs, deviceInfo:{manufacturer:'Thavayil Electronics', model:'v1', hwVersion:'1.0', swVersion:'1.0'}};
       });
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
