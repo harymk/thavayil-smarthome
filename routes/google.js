@@ -65,14 +65,14 @@ async function googleHandler(req,res){
           for(const ex of cmd.execution){
             const p = ex.params;
             if(ex.command==='action.devices.commands.OnOff'){ d.state=p.on?'ON':'OFF'; ns.on=p.on; }
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:b}; d.color.brightness=b; d.state='ON'; ns.brightness=b; ns.on=true; }
+            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ const b=Math.max(5,Math.min(100, parseInt(p.brightness))); d.brightness=b; if(!d.color) d.color={hue:45,saturation:1,brightness:100}; /* V63 SEPARATE - don't touch color.brightness */ d.state='ON'; ns.brightness=b; ns.on=true; }
             // V62: Color separate - don't touch brightness
             if(ex.command==='action.devices.commands.ColorAbsolute' && p.color?.spectrumHSV){
               const hsv=p.color.spectrumHSV;
               if(!d.color) d.color={hue:45, saturation:1, brightness:d.brightness||100};
               d.color.hue=Math.round(hsv.hue)%360;
               let s=parseFloat(hsv.saturation); if(s>1) s=s/100; d.color.saturation=Math.max(0,Math.min(1,s));
-              d.state='ON'; const bri=d.brightness||100; ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:bri/100}}; ns.brightness=bri; ns.on=true;
+              d.state='ON'; const colorBri = d.color.brightness||100; ns.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:colorBri/100}}; ns.on=true; // V63 SEPARATE - color doesn't return brightness
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               if(p.fanSpeed){ const mapStr={low:2, 'low 1':1, 'low 2':2, medium:3, 'medium low':2, 'medium high':4, high:5}; d.speed=mapStr[p.fanSpeed.toLowerCase()]||3; d.state='ON'; ns.currentFanSpeedSetting=p.fanSpeed; ns.on=true; }
