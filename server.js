@@ -110,14 +110,17 @@ async function sendGoogleReportState(userId, dev){
       const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
       state.currentFanSpeedSetting = map[dev.speed] || 'medium';
     }
-        if(dev.type==='LIGHT'){
+    if(dev.type==='LIGHT'){
       if(dev.brightness!==undefined) state.brightness = dev.brightness;
       let h=0,s=0,v=1;
-      if(dev.color){
-        if(dev.color.hue!==undefined) h=dev.color.hue;
-        if(dev.color.saturation!==undefined){ s=dev.color.saturation; if(s>1) s=s/100; }
-        if(dev.color.brightness!==undefined) v=dev.color.brightness/100;
-      }
+      try{
+        if(dev.color){
+          if(dev.color.hue!==undefined) h=dev.color.hue;
+          if(dev.color.saturation!==undefined){ s=dev.color.saturation; if(s>1) s=s/100; }
+          if(dev.color.brightness!==undefined) v=dev.color.brightness/100;
+          else if(dev.color.value!==undefined) v=dev.color.value>1? dev.color.value/100 : dev.color.value;
+        }
+      }catch(e){}
       state.color = { spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } };
     }
     lastReportedState[userId][dev.id] = {...state, ts: Date.now() };
@@ -224,20 +227,11 @@ app.post('/oauth/authorize', async (req,res)=>{
 });
 app.post('/oauth/token', async (req,res)=>{
   try{
-    console.log('OAUTH TOKEN REQ:', req.body.grant_type, 'code?', !!req.body.code, 'refresh?', !!req.body.refresh_token);
-    let userId = null;
-    if(req.body.code){
-      const entry=await Code.findOne({code:req.body.code});
-      if(entry) userId = entry.userId;
-    }
-    if(!userId && req.body.refresh_token){
-      try{ const dec = require('jsonwebtoken').verify(req.body.refresh_token, JWT_SECRET_NEW); userId = dec.userId; }catch(e){ try{ userId = require('jsonwebtoken').decode(req.body.refresh_token)?.userId; }catch(e2){} }
-    }
-    if(!userId) return res.status(400).json({error:'invalid_grant'});
-    const token=require('jsonwebtoken').sign({userId:userId}, JWT_SECRET_NEW, {noTimestamp:true});
-    console.log('OAUTH TOKEN OK for', userId);
-    res.json({access_token:token, refresh_token:token, token_type:'Bearer', expires_in:31536000});
-  }catch(e){ console.log('TOKEN ERROR', e.message); res.status(500).json({error:e.message}); }
+    const entry=await Code.findOne({code:req.body.code});
+    if(!entry) return res.status(400).json({error:'invalid code'});
+    const token=jwt.sign({userId:entry.userId}, JWT_SECRET_NEW, {noTimestamp:true});
+    res.json({access_token:token,refresh_token:token,token_type:'Bearer',expires_in:31536000});
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
 
 function authMiddleware(req,res,next){
@@ -284,22 +278,40 @@ app.patch('/api/devices/:id/rename', authMiddleware, async (req,res)=>{
 app.delete('/api/devices/:id', authMiddleware, async (req,res)=>{
   try{ await Device.deleteOne({id:req.params.id, userId:req.user.userId}); io.to('user_'+req.user.userId).emit('device_deleted',{id:req.params.id}); res.json({success:true}); }catch(e){ res.status(500).json({error:e.message}); }
 });
+
 app.post('/api/device/control', authMiddleware, async (req,res)=>{
   try{
     const {deviceId,action,color,brightness,speed}=req.body;
     let dev=await Device.findOne({id:deviceId, userId:req.user.userId}) || await Device.findOne({deviceId, userId:req.user.userId});
-    if(dev){
-      if(action==='TurnOn') dev.state='ON';
-      if(action==='TurnOff') dev.state='OFF';
-      if(color&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; if(color.hue!==undefined) dev.color.hue=color.hue; if(color.saturation!==undefined) dev.color.saturation=color.saturation; dev.state='ON'; /* V46 separate */ }
-      if(brightness!==undefined&&dev.type==='LIGHT'){ if(!dev.color) dev.color={hue:45,saturation:1,brightness:100}; dev.color.brightness=parseInt(brightness); dev.brightness=parseInt(brightness); dev.state='ON'; }
-      if(speed!==undefined&&dev.type==='FAN'){ dev.speed=parseInt(speed); dev.state='ON'; }
-      await dev.save(); await emitDevice(req.user.userId, dev);
-      io.to('user_'+req.user.userId).emit('alexa_cmd',{deviceId,action:action||'TurnOn',color,brightness,speed});
+    if(!dev) return res.status(404).json({error:'device not found'});
+    if(action==='TurnOn') dev.state='ON';
+    if(action==='TurnOff') dev.state='OFF';
+    if(color && dev.type==='LIGHT'){
+      if(!dev.color) dev.color={hue:45,saturation:1,brightness:100};
+      // V47: Only hue/sat from color picker, brightness stays independent
+      if(color.hue!==undefined) dev.color.hue = parseInt(color.hue);
+      if(color.saturation!==undefined) dev.color.saturation = parseFloat(color.saturation);
+      // Do NOT touch dev.brightness or dev.color.brightness here
+      dev.state='ON';
     }
+    if(brightness!==undefined && dev.type==='LIGHT'){
+      const b = Math.max(5, Math.min(100, parseInt(brightness)));
+      dev.brightness = b;
+      if(!dev.color) dev.color={hue:45,saturation:1,brightness:100};
+      dev.color.brightness = b; // Keep color.bri in sync with actual brightness for display
+      dev.state='ON';
+    }
+    if(speed!==undefined && dev.type==='FAN'){
+      dev.speed=parseInt(speed);
+      dev.state='ON';
+    }
+    await dev.save();
+    await emitDevice(req.user.userId, dev);
+    io.to('user_'+req.user.userId).emit('alexa_cmd',{deviceId,action:action||'TurnOn',color,brightness,speed});
     res.json({success:true,device:dev});
-  }catch(e){ res.status(500).json({error:e.message}); }
+  }catch(e){ console.log('control error', e); res.status(500).json({error:e.message}); }
 });
+
 
 app.post('/alexa/smarthome', async (req,res)=>{
   try{
@@ -334,7 +346,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
     }
     if(ns==='Alexa.ColorController' && name==='SetColor'){
       const endpointId=directive.endpoint.endpointId; const color=directive.payload.color; let h=Math.round(color.hue); let s=parseFloat(color.saturation); let b=Math.round((color.brightness||1)*100);
-      let dev=await Device.findOne({id:endpointId, userId}); if(dev){ dev.state='ON'; dev.color={hue:h,saturation:s,brightness:dev.brightness||100}; /* V46 separate */ await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetColor',color:{hue:h,saturation:s,brightness:b}}); }
+      let dev=await Device.findOne({id:endpointId, userId}); if(dev){ dev.state='ON'; dev.color={hue:h,saturation:s,brightness:dev.brightness||100}; await dev.save(); await emitDevice(userId,dev); io.to('user_'+userId).emit('alexa_cmd',{deviceId:endpointId,action:'SetColor',color:{hue:h,saturation:s,brightness:b}}); }
       return res.json({event:{header:{namespace:'Alexa',name:'Response',payloadVersion:'3',messageId:header.messageId,correlationToken:header.correlationToken},endpoint:{endpointId},payload:{}},context:{properties:[{namespace:'Alexa.ColorController',name:'color',value:{hue:h,saturation:s,brightness:color.brightness},timeOfSample:new Date().toISOString(),uncertaintyInMilliseconds:500}]}});
     }
     if(ns==='Alexa.PercentageController'){
@@ -429,12 +441,29 @@ app.post('/google/smarthome', async (req,res)=>{
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
         if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 80;
-          const col = d.color || {hue:45, saturation:1, brightness: bri};
+          const bri = (d.brightness!==undefined)? d.brightness : 100;
+          let h=0,s=0,v=1;
+          if(d.color){
+            if(d.color.hue!==undefined) h=d.color.hue;
+            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+            if(d.color.brightness!==undefined) v=d.color.brightness/100;
+            else if(d.color.value!==undefined) v=d.color.value>1? d.color.value/100 : d.color.value;
+          }
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
         }
         devicesState[q.id]=state;
+      }
+      for(let k in devicesState){
+        try{
+          if(devicesState[k] && devicesState[k].color){
+            let hsv = devicesState[k].color.spectrumHsv;
+            if(!hsv) hsv = {hue:0,saturation:0,value:1};
+            if(hsv.saturation>1) hsv.saturation = hsv.saturation/100;
+            if(hsv.value>1) hsv.value = hsv.value/100;
+            devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
+          }
+        }catch(e){}
       }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
@@ -479,7 +508,7 @@ app.post('/google/smarthome', async (req,res)=>{
             }
             if(ex.command==='action.devices.commands.ColorAbsolute' && params.color?.spectrumHSV){
               const hsv=params.color.spectrumHSV;
-              dev.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:dev.brightness||100}; /* V46 */
+              dev.color={hue:Math.round(hsv.hue), saturation:parseFloat(hsv.saturation), brightness:dev.brightness||100};
               dev.state='ON';
               newState.on = true;
               newState.color = {spectrumHsv:{hue:dev.color.hue, saturation:dev.color.saturation, value:hsv.value}};
@@ -515,185 +544,6 @@ io.on('connection', async (socket)=>{
 });
 
 const PORT=process.env.PORT||10000;
-
-
-
-app.get('/test/report-both', async (req,res)=>{
-  try{
-    const id=req.query.id||'1875336409';
-    const userId='1789741458155';
-    const dev=await Device.findOne({id:id});
-    if(!dev) return res.status(404).json({error:'not found'});
-    // Force ON
-    dev.state='ON';
-    dev.brightness=100;
-    await dev.save();
-    await sendGoogleReportState(userId, dev);
-    // Also try Alexa
-    try{ await sendAlexaReportState(userId, dev); }catch(e){ console.log('Alexa report failed', e.message); }
-    res.json({ok:true, sent: {id, state: dev.state}});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-
-
-// V37 OVERRIDE: Force ALL fulfillment paths to use fixed handler with online:true
-app.post('/google/smarthome', async (req,res)=>{
-  // Reuse handleGoogleSmarthome logic inline to ensure latest
-  try{
-    const auth=req.headers.authorization;
-    if(!auth) return res.status(401).json({error:'no auth'});
-    const token=auth.replace('Bearer ','');
-    let decoded; try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_NEW); }catch(e){ try{ decoded=require('jsonwebtoken').verify(token, JWT_SECRET_OLD); }catch(e2){ decoded=require('jsonwebtoken').decode(token); } }
-    const userId = decoded?.userId || token;
-    const requestId = req.body.requestId;
-    const input = req.body.inputs?.[0];
-    const intent = input?.intent;
-    console.log(`=== GOOGLE V37 ${intent} user ${userId} ===`);
-
-    if(intent==='action.devices.SYNC'){
-      const userDevices=await Device.find({userId});
-      console.log('V37 SYNC found', userDevices.length);
-      const devices=userDevices.map(d=>{
-        let traits=[]; let type='action.devices.types.SWITCH'; let attrs={};
-        if(d.type==='LIGHT'){ traits=['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting']; type='action.devices.types.LIGHT'; attrs={colorModel:'hsv', colorTemperatureRange:{temperatureMinK:2000, temperatureMaxK:9000}}; }
-        else if(d.type==='FAN'){ traits=['action.devices.traits.OnOff','action.devices.traits.FanSpeed']; type='action.devices.types.FAN'; attrs={availableFanSpeeds:{speeds:[{speed_name:'low',speed_values:[{speed_synonym:['low'],lang:'en'}]},{speed_name:'medium',speed_values:[{speed_synonym:['medium'],lang:'en'}]},{speed_name:'high',speed_values:[{speed_synonym:['high'],lang:'en'}]}],ordered:true}}; }
-        else traits=['action.devices.traits.OnOff'];
-        return {id:d.id, type, traits, name:{name:d.name||d.id, defaultNames:[d.name||d.id], nicknames:[d.name||d.id]}, willReportState:true, attributes:attrs, deviceInfo:{manufacturer:'Thavayil', model:'v1', hwVersion:'1', swVersion:'1'}};
-      });
-      return res.json({requestId, payload:{agentUserId:userId, devices}});
-    }
-    if(intent==='action.devices.QUERY'){
-      const devicesState={};
-      const userDevices=await Device.find({userId});
-      for(let d of userDevices){
-        let state={online:true, status:'SUCCESS', on: d.state==='ON'};
-        if(d.type==='LIGHT'){
-          const bri=d.brightness!==undefined?d.brightness:100;
-          let h=0,s=0;
-          if(d.color){ if(d.color.hue!==undefined) h=d.color.hue; if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; } }
-          // V41 FIX: color value must match brightness trait, else dashboard auto-adjusts brightness to value
-          const v = bri/100;
-          state.brightness=bri;
-          state.color={ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:(state.brightness||100)/100 } };
-        }
-        if(d.type==='FAN'){ state.currentFanSpeedSetting=d.speed||'low'; }
-        devicesState[d.id]=state;
-      }
-      console.log('V37 QUERY', JSON.stringify(devicesState).slice(0,800));
-      return res.json({requestId, payload:{devices:devicesState}});
-    }
-    if(intent==='action.devices.EXECUTE'){
-      const commands=input.payload.commands;
-      const results=[];
-      for(let cmd of commands){
-        for(let devInfo of cmd.devices){
-          const id=devInfo.id;
-          const d=await Device.findOne({id:id, userId:userId}) || await Device.findOne({id:id});
-          if(!d) continue;
-          console.log('V37 EXECUTE', id, JSON.stringify(cmd.execution));
-          let newState={online:true};
-          for(let ex of cmd.execution){
-            if(ex.command==='action.devices.commands.OnOff'){ d.state=ex.params.on?'ON':'OFF'; newState.on=ex.params.on; }
-            if(ex.command==='action.devices.commands.BrightnessAbsolute'){ d.brightness=ex.params.brightness; d.state='ON'; newState.brightness=ex.params.brightness; newState.on=true; }
-            if(ex.command==='action.devices.commands.ColorAbsolute'){
-              console.log('COLOR COMMAND params:', JSON.stringify(ex.params));
-              let hsv = null;
-              if(ex.params.color?.spectrumHSV){
-                hsv = ex.params.color.spectrumHSV;
-                console.log('Received spectrumHSV', hsv);
-              } else if(ex.params.color?.spectrumHsv){
-                hsv = ex.params.color.spectrumHsv;
-                console.log('Received spectrumHsv', hsv);
-              } else if(ex.params.color?.spectrumRgb){
-                // Convert RGB int to HSV
-                const rgbInt = ex.params.color.spectrumRgb;
-                const r = (rgbInt >> 16) & 255;
-                const g = (rgbInt >> 8) & 255;
-                const b = rgbInt & 255;
-                console.log('Received spectrumRgb', rgbInt, '->', r,g,b);
-                // RGB to HSV conversion
-                const r1=r/255, g1=g/255, b1=b/255;
-                const max=Math.max(r1,g1,b1), min=Math.min(r1,g1,b1);
-                let h=0,s=0,v=max;
-                const d=max-min;
-                s = max===0 ? 0 : d/max;
-                if(max!==min){
-                  switch(max){
-                    case r1: h=(g1-b1)/d + (g1<b1?6:0); break;
-                    case g1: h=(b1-r1)/d + 2; break;
-                    case b1: h=(r1-g1)/d + 4; break;
-                  }
-                  h/=6;
-                }
-                hsv = {hue: Math.round(h*360), saturation: s, value: v};
-                console.log('Converted RGB to HSV', hsv);
-              }
-              if(hsv){
-                // V40 FIX: Don't auto-adjust brightness when color changes
-                // Keep brightness trait separate from color value
-                d.color={hue:Math.round(hsv.hue)%360, saturation:Math.max(0,Math.min(1,hsv.saturation)), brightness:d.brightness||100}; /* V46 */
-                d.state='ON';
-                // Only update color, NOT brightness trait - brightness stays as user set it
-                newState.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.brightness||100)/100}}; // V41: value = brightness/100 to prevent jump
-                newState.on=true;
-                // Don't send brightness in color command, so dashboard brightness slider doesn't jump
-                console.log(`V40 COLOR FIX: hue=${d.color.hue} sat=${d.color.saturation} colorBright=${colorBrightness} keeping device brightness=${d.brightness}`);
-              }
-            }
-            if(ex.command==='action.devices.commands.SetFanSpeed'){ d.speed=ex.params.fanSpeed; d.state='ON'; newState.currentFanSpeedSetting=d.speed; newState.on=true; }
-          }
-          await d.save();
-          // Ensure return full state like QUERY
-          if(d.type==='LIGHT' && !newState.brightness) newState.brightness=d.brightness||100;
-          if(d.type==='LIGHT' && !newState.color && d.color){ let h=d.color.hue||0,s=d.color.saturation||0,v=(d.color.brightness||100)/100; if(s>1) s/=100; newState.color={spectrumHsv:{hue:Math.round(h)%360, saturation:s, value:v}}; }
-          console.log('V37 EXECUTE RETURN', id, JSON.stringify(newState));
-          try{ await sendGoogleReportState(userId, d); }catch(e){ console.log('Report fail', e.message); }
-          results.push({ids:[id], status:'SUCCESS', states:newState});
-        }
-      }
-      console.log('V37 EXECUTE FINAL', JSON.stringify(results).slice(0,1000));
-      return res.json({requestId, payload:{commands:results}});
-    }
-  }catch(e){ console.log('V37 ERROR', e.message, e.stack); res.status(500).json({error:e.message}); }
-});
-
-app.post('/smarthome', (req,res)=>{ 
-  // Forward to same logic by reusing the above handler
-  req.url='/google/smarthome'; 
-  app._router.handle(req,res);
-});
-
-
-app.get('/test/version', (req,res)=> res.json({version:'V46_COLOR_SEPARATE_FINAL', spectrumRgbCount: 0, ok:true, time: new Date().toISOString()}));
-app.get('/test/query', async (req,res)=>{
-  try{
-    const id=req.query.id||'1875336409';
-    const dev=await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
-    if(!dev) return res.status(404).json({error:'device not found'});
-    let h=0,s=0,v=1;
-    if(dev.color){
-      if(dev.color.hue!==undefined) h=dev.color.hue;
-      if(dev.color.saturation!==undefined){ s=dev.color.saturation; if(s>1) s=s/100; }
-      if(dev.color.brightness!==undefined) v=dev.color.brightness/100;
-    }
-    let state={online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    res.json({deviceId:id, queryState:state, raw: dev, version:'V39', check:'ONLY spectrumHsv, NO spectrumRgb'});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.get('/test/homegraph', async (req,res)=>{
-  try{
-    const id=req.query.id||'1875336409';
-    const userId=req.query.userId||'1789741458155';
-    const dev=await Device.findOne({id:id});
-    if(!dev) return res.status(404).json({error:'device not found'});
-    await sendGoogleReportState(userId, dev);
-    res.json({ok:true, message:'ReportState sent, check Render logs for HomeGraph status', device: {id: dev.id, state: dev.state}});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.get('/test/offline/clear', async (req,res)=>{
-  try{ await OfflineState.deleteMany({}); res.json({ok:true, message:'Offline cleared'}); }catch(e){ res.status(500).json({error:e.message}); }
-});
-
 server.listen(PORT,()=>console.log(`Thavayil SmartHome FIXED FAN - Port ${PORT} - Mongo: ${mongoose.connection.readyState}`));
 
 
@@ -817,12 +667,29 @@ app.post('/google', async (req,res)=>{
           state.currentFanSpeedSetting = map[d.speed] || 'medium';
         }
         if(d.type==='LIGHT'){
-          const bri = (d.brightness!==undefined)? d.brightness : 80;
-          const col = d.color || {hue:45, saturation:1, brightness: bri};
+          const bri = (d.brightness!==undefined)? d.brightness : 100;
+          let h=0,s=0,v=1;
+          if(d.color){
+            if(d.color.hue!==undefined) h=d.color.hue;
+            if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
+            if(d.color.brightness!==undefined) v=d.color.brightness/100;
+            else if(d.color.value!==undefined) v=d.color.value>1? d.color.value/100 : d.color.value;
+          }
           state.brightness = bri;
-          state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
+          state.color = { spectrumHsv:{ hue: Math.round(h)%360, saturation: Math.max(0,Math.min(1,s)), value: Math.max(0,Math.min(1,v)) } };
         }
         devicesState[q.id]=state;
+      }
+      for(let k in devicesState){
+        try{
+          if(devicesState[k] && devicesState[k].color){
+            let hsv = devicesState[k].color.spectrumHsv;
+            if(!hsv) hsv = {hue:0,saturation:0,value:1};
+            if(hsv.saturation>1) hsv.saturation = hsv.saturation/100;
+            if(hsv.value>1) hsv.value = hsv.value/100;
+            devicesState[k].color = { spectrumHsv: { hue: hsv.hue||0, saturation: Math.max(0,Math.min(1,hsv.saturation||0)), value: Math.max(0,Math.min(1,hsv.value||1)) } };
+          }
+        }catch(e){}
       }
       console.log('QUERY V12', JSON.stringify({dbOffline: dbOfflineIds, memory:Array.from(global.offlineDevices)}));
       return res.json({requestId, payload:{devices:devicesState}});
