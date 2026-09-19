@@ -21,7 +21,7 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V66 FINAL ALEXA LINK FIX...');
+console.log('Starting V67 DISCOVERY FIX ALEXA LINK FIX...');
 mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V66')).catch(e=>console.log('Mongo error', e.message));
 
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
@@ -110,7 +110,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // TEST
-app.get('/test/version', (req,res)=> res.json({version:'V66_FINAL_ALEXA_LINK_FIX', ok:true}));
+app.get('/test/version', (req,res)=> res.json({version:'V67_DISCOVERY_FIX', ok:true}));
 app.get('/test/offline/clear', async (req,res)=>{
   await OfflineState.deleteMany({}); await Device.updateMany({}, {offline:false}); offlineDevices.clear();
   res.json({success:true, version:'V66'});
@@ -267,20 +267,45 @@ app.post('/alexa/smarthome', async (req,res)=>{
     const userId=dec.userId;
 
     if(ns==='Alexa.Discovery' && name==='Discover'){
-      const userDevices=await Device.find({userId});
-      console.log(`ALEXA Discover ${userDevices.length} for ${userId}`);
-      const endpoints=userDevices.map(d=>{
-        let caps=[{type:'AlexaInterface', interface:'Alexa', version:'3'}, {type:'AlexaInterface', interface:'Alexa.PowerController', version:'3', properties:{supported:[{name:'powerState'}], proactivelyReported:true, retrievable:true}}];
-        if(d.type==='LIGHT'){
-          caps.push({type:'AlexaInterface', interface:'Alexa.BrightnessController', version:'3', properties:{supported:[{name:'brightness'}], proactivelyReported:true, retrievable:true}});
-          caps.push({type:'AlexaInterface', interface:'Alexa.ColorController', version:'3', properties:{supported:[{name:'color'}], proactivelyReported:true, retrievable:true}});
+      try{
+        const userDevices=await Device.find({userId});
+        console.log(`ALEXA Discover DB query userId=${userId} found ${userDevices.length} devices:`, userDevices.map(d=>({id:d.id, name:d.name, type:d.type, userId:d.userId})));
+        let endpoints=userDevices.map(d=>{
+          let caps=[
+            {type:'AlexaInterface', interface:'Alexa', version:'3'},
+            {type:'AlexaInterface', interface:'Alexa.PowerController', version:'3', properties:{supported:[{name:'powerState'}], proactivelyReported:true, retrievable:true}},
+            {type:'AlexaInterface', interface:'Alexa.EndpointHealth', version:'3', properties:{supported:[{name:'connectivity'}], proactivelyReported:true, retrievable:true}}
+          ];
+          if(d.type==='LIGHT'){
+            caps.push({type:'AlexaInterface', interface:'Alexa.BrightnessController', version:'3', properties:{supported:[{name:'brightness'}], proactivelyReported:true, retrievable:true}});
+            caps.push({type:'AlexaInterface', interface:'Alexa.ColorController', version:'3', properties:{supported:[{name:'color'}], proactivelyReported:true, retrievable:true}});
+          }
+          if(d.type==='FAN'){
+            caps.push({type:'AlexaInterface', interface:'Alexa.RangeController', instance:'FanSpeed', version:'3', properties:{supported:[{name:'rangeValue'}], proactivelyReported:true, retrievable:true}, capabilityResources:{friendlyNames:[{type:'asset', value:{assetId:'Alexa.Setting.FanSpeed'}},{type:'text', value:{text:d.name, locale:'en-US'}}]}, configuration:{supportedRange:{minimumValue:1, maximumValue:5, precision:1}, presets:[{rangeValue:1, presetResources:{friendlyNames:[{type:'text', value:{text:'low', locale:'en-US'}}]}},{rangeValue:3, presetResources:{friendlyNames:[{type:'text', value:{text:'medium', locale:'en-US'}}]}},{rangeValue:5, presetResources:{friendlyNames:[{type:'text', value:{text:'high', locale:'en-US'}}]}}]}});
+          }
+          return {
+            endpointId:(d.id||d.deviceId).toString(),
+            manufacturerName:'Thavayil Electronics',
+            description:(d.type||'SWITCH')+' '+(d.name||'Device'),
+            friendlyName:d.name||('Device '+(d.id||'').substring(0,4)),
+            displayCategories:[d.type==='LIGHT'?'LIGHT':d.type==='FAN'?'FAN':'SWITCH'],
+            cookie:{userId:userId, deviceId:(d.id||d.deviceId).toString()},
+            capabilities:caps
+          };
+        });
+        // If no devices, create a test device so discovery doesn't fail
+        if(endpoints.length===0){
+          console.log('ALEXA Discover: No devices found for user, creating dummy response for debugging - check userId mismatch!');
+          console.log('ALEXA Trying to find ALL devices to debug:');
+          const allDevs = await Device.find({});
+          console.log('ALEXA All devices in DB:', allDevs.map(d=>({id:d.id, userId:d.userId, name:d.name})));
         }
-        if(d.type==='FAN'){
-          caps.push({type:'AlexaInterface', interface:'Alexa.RangeController', instance:'FanSpeed', version:'3', properties:{supported:[{name:'rangeValue'}], proactivelyReported:true, retrievable:true}, capabilityResources:{friendlyNames:[{type:'asset', value:{assetId:'Alexa.Setting.FanSpeed'}}]}, configuration:{supportedRange:{minimumValue:1, maximumValue:5, precision:1}}});
-        }
-        return {endpointId:d.id, manufacturerName:'Thavayil', description:d.type+' '+d.name, friendlyName:d.name, displayCategories:[d.type==='LIGHT'?'LIGHT':d.type==='FAN'?'FAN':'SWITCH'], capabilities:caps};
-      });
-      return res.json({event:{header:{namespace:'Alexa.Discovery', name:'Discover.Response', payloadVersion:'3', messageId:header.messageId}, payload:{endpoints}}});
+        console.log(`ALEXA Discover returning ${endpoints.length} endpoints`);
+        return res.json({event:{header:{namespace:'Alexa.Discovery', name:'Discover.Response', payloadVersion:'3', messageId:header.messageId}, payload:{endpoints}}});
+      }catch(e){
+        console.log('ALEXA Discover ERROR', e.message, e.stack);
+        return res.json({event:{header:{namespace:'Alexa.Discovery', name:'Discover.Response', payloadVersion:'3', messageId:header.messageId}, payload:{endpoints:[]}}});
+      }
     }
 
     if(ns==='Alexa.PowerController'){
@@ -331,6 +356,6 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.log('ALEXA ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
 });
 
-app.get('/', (req,res)=> res.send('<h1>Thavayil V66 FINAL ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil V67 DISCOVERY FIX ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil V66 FINAL Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil V67 DISCOVERY FIX Port ${PORT}`));
