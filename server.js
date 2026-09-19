@@ -120,35 +120,6 @@ app.get('/privacy',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40p
 app.get('/terms',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Terms</h1><p>Thavayil SmartHome</p></div>`); });
 app.get('/support',(req,res)=>{ res.send(`<div style="max-width:800px;margin:40px auto;padding:20px"><h1>Support - thavayil.ckm@gmail.com</h1></div>`); });
 app.get('/health',(req,res)=>{ res.json({status:'ok', mongo: mongoose.connection.readyState, mongoLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState], time: new Date().toISOString()}); });
-global.offlineDevices = global.offlineDevices || new Set();
-global.qCount = global.qCount || {};
-app.get('/test/offline/clear', (req,res)=>{
-  global.offlineDevices = new Set();
-  global.qCount = {};
-  console.log('CLEARED');
-  res.json({success:true});
-});
-
-// Helper for Google Test Suite - manually make device offline/online
-});
-app.post('/test/offline', async (req,res)=>{
-  if(!global.qCount) global.qCount={};
-  if(!global.offlineDevices) global.offlineDevices=new Set();
-  const {deviceId, online} = req.body;
-  if(!deviceId) return res.status(400).json({error:'deviceId required'});
-  if(online===false){ global.offlineDevices.add(deviceId); global.qCount[deviceId]=0; }
-  else { global.offlineDevices.delete(deviceId); global.qCount[deviceId]=0; }
-  console.log('TEST manual', deviceId, 'online=', online);
-
-  const {deviceId, online} = req.body;
-  if(!deviceId) return res.status(400).json({error:'deviceId required'});
-  if(online===false) global.offlineDevices.add(deviceId);
-  else global.offlineDevices.delete(deviceId);
-  console.log('TEST offline set', deviceId, 'online=', online, 'set=', Array.from(global.offlineDevices));
-  res.json({success:true, offlineDevices: Array.from(global.offlineDevices)});
-});
-app.get('/test/offline', (req,res)=>{ res.json({offlineDevices: Array.from(global.offlineDevices||[]) }); });
-
 app.get('/debug', async (req,res)=>{
   res.json({
     mongo_state: mongoose.connection.readyState,
@@ -369,55 +340,24 @@ app.post('/google/smarthome', async (req,res)=>{
       return res.json({requestId, payload:{agentUserId:userId, devices}});
     }
 
-    if(!global.qCount) global.qCount = {};
-if(!global.offlineDevices) global.offlineDevices = new Set();
-if(intent==='action.devices.QUERY'){
-  const payloadDevices = req.body.inputs[0].payload.devices;
-  const userDevices=await Device.find({userId});
-  let devicesState = {};
-  for(const q of payloadDevices){
-    const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
-    let isManualOffline = global.offlineDevices.has(q.id);
-    let online = true;
-
-    // For Google Online/Offline test: only toggle for single-device queries
-    if(payloadDevices.length===1){
-      if(!global.qCount[q.id]) global.qCount[q.id]=0;
-      // If manual offline is set, force offline, don't use counter
-      if(isManualOffline){
-        online = false;
-      } else {
-        // Auto cycle: 1st query=true, 2nd=false, 3rd=true, then reset
-        global.qCount[q.id]++;
-        if(global.qCount[q.id]===1) online=true;
-        else if(global.qCount[q.id]===2) online=false;
-        else { online=true; global.qCount[q.id]=0; } // 3rd resets
+    if(intent==='action.devices.QUERY'){
+      const payloadDevices = req.body.inputs[0].payload.devices;
+      const userDevices=await Device.find({userId});
+      let devicesState = {};
+      for(const q of payloadDevices){
+        const d = userDevices.find(x=>x.id===q.id || x.deviceId===q.id);
+        if(!d){ devicesState[q.id]={online:false}; continue; }
+        let state = {online:true, on: d.state==='ON', status:'SUCCESS'};
+        if(d.type==='FAN'){
+          const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
+          state.currentFanSpeedSetting = map[d.speed] || 'medium';
+        }
+        if(d.type==='LIGHT' && d.brightness!==undefined) state.brightness = d.brightness;
+        if(d.type==='LIGHT' && d.color){ state.color={spectrumHsv:{hue:d.color.hue, saturation:d.color.saturation, value:(d.color.brightness||100)/100}}; }
+        devicesState[q.id]=state;
       }
-    } else {
-      // Multi-device queries (Device Requirements) always online true
-      online = !isManualOffline;
+      return res.json({requestId, payload:{devices:devicesState}});
     }
-
-    if(!d){
-      devicesState[q.id]={online:online, on:false, status:'SUCCESS'};
-      continue;
-    }
-    let state = {online:online, on: d.state==='ON', status:'SUCCESS'};
-    if(d.type==='FAN'){
-      const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
-      state.currentFanSpeedSetting = map[d.speed] || 'medium';
-    }
-    if(d.type==='LIGHT'){
-      const bri = (d.brightness!==undefined)? d.brightness : 80;
-      const col = d.color || {hue:45, saturation:1, brightness: bri};
-      state.brightness = bri;
-      state.color = { spectrumHsv:{ hue: col.hue||45, saturation: (col.saturation!==undefined?col.saturation:1), value: ((col.brightness||bri)/100) } };
-    }
-    devicesState[q.id]=state;
-  }
-  console.log('QUERY final', JSON.stringify({qCount:global.qCount, offline:Array.from(global.offlineDevices), result:devicesState}));
-  return res.json({requestId, payload:{devices:devicesState}});
-}
 
     if(intent==='action.devices.EXECUTE'){
       const commands = req.body.inputs[0].payload.commands;
@@ -438,12 +378,7 @@ if(intent==='action.devices.QUERY'){
                 const map = {1:'low',2:'low',3:'medium',4:'high',5:'high'};
                 newState.currentFanSpeedSetting = map[dev.speed] || 'medium';
               }
-              if(dev.type==='LIGHT'){
-                const bri = (dev.brightness!==undefined)? dev.brightness : 80;
-                const col = dev.color || {hue:45, saturation:1, brightness: bri};
-                newState.brightness = bri;
-                newState.color = { spectrumHsv:{ hue: col.hue||45, saturation: col.saturation||1, value: (col.brightness||bri)/100 } };
-              }
+              if(dev.type==='LIGHT' && dev.brightness!==undefined) newState.brightness = dev.brightness;
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               const mapStr = {low:1, medium:3, high:5};
