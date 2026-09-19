@@ -543,44 +543,35 @@ app.get('/test/fix-color', async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.get('/test/google-query', async (req,res)=>{
+app.get('/test/force-report', async (req,res)=>{
   try{
+    const id = req.query.id || '1875336409';
     const userId = req.query.userId || '1789741458155';
-    const deviceId = req.query.deviceId || '1875336409';
-    const userDevices = await Device.find({userId});
-    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    if(!d) return res.status(404).json({error:'device not found'});
-    let h=0,s=0,v=1;
-    if(d.color){
-      if(d.color.hue!==undefined) h=d.color.hue;
-      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-      if(d.color.brightness!==undefined) v=d.color.brightness/100;
-    }
-    const bri = d.brightness||100;
-    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('RAW DB COLOR:', JSON.stringify(d.color));
-    console.log('RETURNING STATE:', JSON.stringify(state));
-    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER, note: 'This is exactly what Google QUERY returns - should have ONLY spectrumHsv'});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.post('/test/google-query', async (req,res)=>{
-  try{
-    const userId = req.body.userId || req.query.userId || '1789741458155';
-    const deviceId = req.body.deviceId || req.query.deviceId || '1875336409';
-    const userDevices = await Device.find({userId});
-    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    if(!d) return res.status(404).json({error:'device not found'});
-    let h=0,s=0,v=1;
-    if(d.color){
-      if(d.color.hue!==undefined) h=d.color.hue;
-      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-      if(d.color.brightness!==undefined) v=d.color.brightness/100;
-    }
-    const bri = d.brightness||100;
-    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('RAW DB COLOR:', JSON.stringify(d.color));
-    console.log('RETURNING STATE:', JSON.stringify(state));
-    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
+    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
+    if(!dev) return res.status(404).json({error:'device not found'});
+    // Build clean state
+    let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
+    if(s>1) s=s/100;
+    let state = {online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('FORCE REPORT CLEAN STATE:', JSON.stringify(state));
+    // Force report
+    dev._forceOnline = true;
+    await sendGoogleReportState(userId, dev);
+    // Also send direct via helper
+    try{
+      const { JWT } = require('google-auth-library');
+      const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
+      if(saJson){
+        const sa = JSON.parse(saJson);
+        const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
+        const tokens = await client.authorize();
+        const https = require('https');
+        const body = JSON.stringify({ requestId: 'force-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [id]: state } } } });
+        const req2 = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, r=>{ let d=''; r.on('data',x=>d+=x); r.on('end',()=>{ console.log('FORCE HomeGraph Report', r.statusCode, d.slice(0,300)); }); });
+        req2.write(body); req2.end();
+      }
+    }catch(e){ console.log('force report error', e.message); }
+    res.json({success:true, sentState: state, version: SERVER_VER});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
@@ -623,44 +614,35 @@ app.get('/test/fix-color', async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.get('/test/google-query', async (req,res)=>{
+app.get('/test/force-report', async (req,res)=>{
   try{
+    const id = req.query.id || '1875336409';
     const userId = req.query.userId || '1789741458155';
-    const deviceId = req.query.deviceId || '1875336409';
-    const userDevices = await Device.find({userId});
-    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    if(!d) return res.status(404).json({error:'device not found'});
-    let h=0,s=0,v=1;
-    if(d.color){
-      if(d.color.hue!==undefined) h=d.color.hue;
-      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-      if(d.color.brightness!==undefined) v=d.color.brightness/100;
-    }
-    const bri = d.brightness||100;
-    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('RAW DB COLOR:', JSON.stringify(d.color));
-    console.log('RETURNING STATE:', JSON.stringify(state));
-    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER, note: 'This is exactly what Google QUERY returns - should have ONLY spectrumHsv'});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.post('/test/google-query', async (req,res)=>{
-  try{
-    const userId = req.body.userId || req.query.userId || '1789741458155';
-    const deviceId = req.body.deviceId || req.query.deviceId || '1875336409';
-    const userDevices = await Device.find({userId});
-    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    if(!d) return res.status(404).json({error:'device not found'});
-    let h=0,s=0,v=1;
-    if(d.color){
-      if(d.color.hue!==undefined) h=d.color.hue;
-      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-      if(d.color.brightness!==undefined) v=d.color.brightness/100;
-    }
-    const bri = d.brightness||100;
-    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('RAW DB COLOR:', JSON.stringify(d.color));
-    console.log('RETURNING STATE:', JSON.stringify(state));
-    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
+    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
+    if(!dev) return res.status(404).json({error:'device not found'});
+    // Build clean state
+    let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
+    if(s>1) s=s/100;
+    let state = {online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('FORCE REPORT CLEAN STATE:', JSON.stringify(state));
+    // Force report
+    dev._forceOnline = true;
+    await sendGoogleReportState(userId, dev);
+    // Also send direct via helper
+    try{
+      const { JWT } = require('google-auth-library');
+      const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
+      if(saJson){
+        const sa = JSON.parse(saJson);
+        const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
+        const tokens = await client.authorize();
+        const https = require('https');
+        const body = JSON.stringify({ requestId: 'force-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [id]: state } } } });
+        const req2 = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, r=>{ let d=''; r.on('data',x=>d+=x); r.on('end',()=>{ console.log('FORCE HomeGraph Report', r.statusCode, d.slice(0,300)); }); });
+        req2.write(body); req2.end();
+      }
+    }catch(e){ console.log('force report error', e.message); }
+    res.json({success:true, sentState: state, version: SERVER_VER});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
@@ -705,44 +687,35 @@ app.get('/test/fix-color', async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.get('/test/google-query', async (req,res)=>{
+app.get('/test/force-report', async (req,res)=>{
   try{
+    const id = req.query.id || '1875336409';
     const userId = req.query.userId || '1789741458155';
-    const deviceId = req.query.deviceId || '1875336409';
-    const userDevices = await Device.find({userId});
-    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    if(!d) return res.status(404).json({error:'device not found'});
-    let h=0,s=0,v=1;
-    if(d.color){
-      if(d.color.hue!==undefined) h=d.color.hue;
-      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-      if(d.color.brightness!==undefined) v=d.color.brightness/100;
-    }
-    const bri = d.brightness||100;
-    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('RAW DB COLOR:', JSON.stringify(d.color));
-    console.log('RETURNING STATE:', JSON.stringify(state));
-    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER, note: 'This is exactly what Google QUERY returns - should have ONLY spectrumHsv'});
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.post('/test/google-query', async (req,res)=>{
-  try{
-    const userId = req.body.userId || req.query.userId || '1789741458155';
-    const deviceId = req.body.deviceId || req.query.deviceId || '1875336409';
-    const userDevices = await Device.find({userId});
-    const d = userDevices.find(x=>x.id===deviceId || x.deviceId===deviceId);
-    if(!d) return res.status(404).json({error:'device not found'});
-    let h=0,s=0,v=1;
-    if(d.color){
-      if(d.color.hue!==undefined) h=d.color.hue;
-      if(d.color.saturation!==undefined){ s=d.color.saturation; if(s>1) s=s/100; }
-      if(d.color.brightness!==undefined) v=d.color.brightness/100;
-    }
-    const bri = d.brightness||100;
-    let state = {online:true, on: d.state==='ON', brightness:bri, status:'SUCCESS', color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
-    console.log('RAW DB COLOR:', JSON.stringify(d.color));
-    console.log('RETURNING STATE:', JSON.stringify(state));
-    res.json({deviceId, state, rawDbColor: d.color, version: SERVER_VER});
+    const dev = await Device.findOne({id:id}) || await Device.findOne({deviceId:id});
+    if(!dev) return res.status(404).json({error:'device not found'});
+    // Build clean state
+    let h=dev.color?.hue||0,s=dev.color?.saturation||0,v=dev.color?.brightness!==undefined? dev.color.brightness/100 : 1;
+    if(s>1) s=s/100;
+    let state = {online:true, on: dev.state==='ON', brightness: dev.brightness||100, color:{ spectrumHsv:{ hue:Math.round(h)%360, saturation:Math.max(0,Math.min(1,s)), value:Math.max(0,Math.min(1,v)) } }};
+    console.log('FORCE REPORT CLEAN STATE:', JSON.stringify(state));
+    // Force report
+    dev._forceOnline = true;
+    await sendGoogleReportState(userId, dev);
+    // Also send direct via helper
+    try{
+      const { JWT } = require('google-auth-library');
+      const saJson = process.env.GOOGLE_SERVICE_ACCOUNT;
+      if(saJson){
+        const sa = JSON.parse(saJson);
+        const client = new JWT({ email: sa.client_email, key: sa.private_key, scopes: ['https://www.googleapis.com/auth/homegraph'] });
+        const tokens = await client.authorize();
+        const https = require('https');
+        const body = JSON.stringify({ requestId: 'force-'+Date.now(), agentUserId: userId, payload: { devices: { states: { [id]: state } } } });
+        const req2 = https.request({ hostname: 'homegraph.googleapis.com', path: '/v1/devices:reportStateAndNotification', method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tokens.access_token}` } }, r=>{ let d=''; r.on('data',x=>d+=x); r.on('end',()=>{ console.log('FORCE HomeGraph Report', r.statusCode, d.slice(0,300)); }); });
+        req2.write(body); req2.end();
+      }
+    }catch(e){ console.log('force report error', e.message); }
+    res.json({success:true, sentState: state, version: SERVER_VER});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
