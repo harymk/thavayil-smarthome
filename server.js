@@ -21,7 +21,7 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V71 FINAL TEST ALEXA LINK FIX...');
+console.log('Starting V72 CLEAN DISCOVERY ALEXA LINK FIX...');
 mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V66')).catch(e=>console.log('Mongo error', e.message));
 
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
@@ -110,7 +110,7 @@ app.post('/oauth/token', async (req,res)=>{
 });
 
 // TEST
-app.get('/test/version', (req,res)=> res.json({version:'V71_FINAL_TEST', ok:true}));
+app.get('/test/version', (req,res)=> res.json({version:'V72_CLEAN_DISCOVERY', ok:true}));
 app.get('/test/offline/clear', async (req,res)=>{
   await OfflineState.deleteMany({}); await Device.updateMany({}, {offline:false}); offlineDevices.clear();
   res.json({success:true, version:'V66'});
@@ -356,7 +356,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
   }catch(e){ console.log('ALEXA ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
 });
 
-app.get('/', (req,res)=> res.send('<h1>Thavayil V71 FINAL TEST ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil V72 CLEAN DISCOVERY ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
 
 // TEST: Alexa discovery json for debugging
 app.get('/test/alexa-discover/:userId', async (req,res)=>{
@@ -395,6 +395,8 @@ app.post('/api/device/rename', authMw, async (req,res)=>{
   try{
     await new Promise(r=>setTimeout(r, 5000));
     const devs = await Device.find({userId:'1789741458155'});
+    // V72 delete gibberish
+    for(const bad of ['3088544467','6360966937']) { try{ await Device.deleteOne({id:bad, userId:'1789741458155'}); console.log('Deleted bad', bad); }catch(e){} }
     for(const d of devs){
       if((d.name||'').length<3){
         const newName = d.type==='FAN' ? `Bedroom Fan ${d.id.slice(-2)}` : d.type==='LIGHT' ? `Living Light ${d.id.slice(-2)}` : `Switch ${d.id.slice(-2)}`;
@@ -407,4 +409,4 @@ app.post('/api/device/rename', authMw, async (req,res)=>{
 })();
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil V71 FINAL TEST Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil V72 CLEAN DISCOVERY Port ${PORT}`));
