@@ -21,77 +21,89 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V73 HARDCODED DISCOVERY...');
-mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V73')).catch(e=>console.log('Mongo error', e.message));
+console.log('Starting V74 FINAL STABLE LINKING + DISCOVERY...');
+mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V74')).catch(e=>console.log('Mongo error', e.message));
 
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
 const Code = mongoose.model('Code', new mongoose.Schema({code:String, userId:String, exp:Number}));
 const Device = mongoose.model('Device', new mongoose.Schema({id:String, deviceId:String, userId:String, name:String, type:String, state:{type:String, default:'OFF'}, color:Object, brightness:Number, speed:Number, offline:Boolean, createdAt:String}, {strict:false}));
 const OfflineState = mongoose.model('OfflineState', new mongoose.Schema({deviceId:{type:String, unique:true}, offline:Boolean, updatedAt:Date}));
 
+let offlineDevices = new Set();
+global.offlineDevices = offlineDevices;
+
 function verifyToken(t){
   try{ return jwt.verify(t, JWT_NEW); }catch(e){ return jwt.verify(t, JWT_OLD); }
 }
-function authMw(req,res,next){
-  try{
-    const token = req.headers.authorization?.replace('Bearer ','');
-    if(!token) throw new Error('no token');
-    req.user = verifyToken(token);
-    next();
-  }catch(e){ res.status(401).json({error:'unauth'}); }
-}
 
+// OAUTH - V67 PROVEN WORKING
 app.get('/oauth/authorize', (req,res)=>{
-  const {redirect_uri, state, client_id} = req.query;
+  const {redirect_uri, state, client_id, response_type} = req.query;
+  console.log('OAUTH GET', {client_id, redirect_uri: redirect_uri?.substring(0,80), state_len: state?.length});
+  if(!redirect_uri) return res.status(400).send('Missing redirect_uri - link from app');
   const safeR = encodeURIComponent(redirect_uri);
   const safeS = encodeURIComponent(state||'');
-  res.send(`<html><body><h2>Thavayil</h2><form method="POST" action="/oauth/authorize?redirect_uri=${safeR}&state=${safeS}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button>Link</button></form></body></html>`);
+  res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link to ${client_id?.includes('google')?'Google Home':'Alexa'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${safeR}&state=${safeS}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button type="submit">Link Account</button></form></div></body></html>`);
 });
 
 app.post('/oauth/authorize', async (req,res)=>{
-  let redirect_uri = req.query.redirect_uri || req.body.redirect_uri;
-  let state = req.query.state || req.body.state;
-  try{ redirect_uri = decodeURIComponent(redirect_uri); }catch(e){}
-  try{ state = decodeURIComponent(state); }catch(e){}
-  const email = (req.body.email||'').toLowerCase().trim();
-  let user = await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
-  if(!user) return res.send('Invalid');
-  const code = crypto.randomBytes(16).toString('hex');
-  await Code.deleteMany({userId:user.id});
-  await Code.create({code, userId:user.id, exp:Date.now()+600000});
-  const finalUrl = redirect_uri.includes('?') ? `${redirect_uri}&code=${code}&state=${encodeURIComponent(state)}` : `${redirect_uri}?code=${code}&state=${encodeURIComponent(state)}`;
-  res.redirect(finalUrl);
+  try{
+    let redirect_uri = req.query.redirect_uri || req.body.redirect_uri;
+    let state = req.query.state || req.body.state;
+    try{ redirect_uri = decodeURIComponent(redirect_uri); }catch(e){}
+    try{ state = decodeURIComponent(state); }catch(e){}
+    console.log('OAUTH POST', {email:req.body.email, redirect_uri: redirect_uri?.substring(0,100), state_len: state?.length});
+    if(!redirect_uri) return res.status(400).send('Missing redirect_uri');
+    const email = (req.body.email||'').toLowerCase().trim();
+    let user = await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
+    if(!user) return res.send('Invalid credentials<br><a href="javascript:history.back()">Back</a>');
+    const code = crypto.randomBytes(16).toString('hex');
+    await Code.deleteMany({userId:user.id});
+    await Code.create({code, userId:user.id, exp:Date.now()+600000});
+    console.log('OAUTH CODE', code, 'for', user.id, 'state len', state?.length);
+    let finalUrl = redirect_uri.includes('?') ? `${redirect_uri}&code=${code}&state=${encodeURIComponent(state)}` : `${redirect_uri}?code=${code}&state=${encodeURIComponent(state)}`;
+    console.log('OAUTH REDIRECT', finalUrl.substring(0,200));
+    res.redirect(finalUrl);
+  }catch(e){ console.log('OAUTH ERR', e.message); res.send('Error:'+e.message); }
 });
 
 app.post('/oauth/token', async (req,res)=>{
   try{
+    console.log('TOKEN REQ', {grant:req.body.grant_type, client_id:req.body.client_id, code:req.body.code?.substring(0,10), hasRefresh:!!req.body.refresh_token});
     if(req.body.grant_type==='refresh_token' && req.body.refresh_token){
       try{
         let dec; try{ dec=jwt.verify(req.body.refresh_token, JWT_NEW); }catch(e){ dec=jwt.verify(req.body.refresh_token, JWT_OLD); }
         const token = jwt.sign({userId:dec.userId}, JWT_NEW, {noTimestamp:true});
+        console.log('TOKEN REFRESH OK', dec.userId);
         return res.json({access_token:token, refresh_token:req.body.refresh_token, token_type:'Bearer', expires_in:31536000});
-      }catch(e){}
+      }catch(e){ console.log('refresh invalid', e.message); }
     }
     const entry = await Code.findOne({code:req.body.code});
-    if(!entry) return res.status(400).json({error:'invalid code'});
+    if(!entry){ console.log('TOKEN INVALID', req.body.code); return res.status(400).json({error:'invalid code'}); }
+    if(entry.exp < Date.now()){ await Code.deleteOne({code:entry.code}); return res.status(400).json({error:'expired'}); }
     const token = jwt.sign({userId:entry.userId}, JWT_NEW, {noTimestamp:true});
     await Code.deleteOne({code:entry.code});
+    console.log('TOKEN OK for', entry.userId);
     res.json({access_token:token, refresh_token:token, token_type:'Bearer', expires_in:31536000});
-  }catch(e){ res.status(500).json({error:e.message}); }
+  }catch(e){ console.log('TOKEN ERR', e.message); res.status(500).json({error:e.message}); }
 });
 
-app.get('/test/version', (req,res)=> res.json({version:'V73_HARDCODED', ok:true}));
+app.get('/test/version', (req,res)=> res.json({version:'V74_FINAL_STABLE', ok:true}));
+app.get('/test/offline/clear', async (req,res)=>{
+  await OfflineState.deleteMany({}); await Device.updateMany({}, {offline:false}); offlineDevices.clear(); res.json({success:true});
+});
 app.get('/test/delete-bad', async (req,res)=>{
   const r1 = await Device.deleteMany({id:{$in:['3088544467','6360966937']}});
   const r2 = await Device.deleteMany({name:{$in:['kkjkh','hjk','jk','gk']}});
   const remaining = await Device.find({userId:'1789741458155'});
-  res.json({deleted: r1.deletedCount + r2.deletedCount, remaining});
+  res.json({deleted: r1.deletedCount + r2.deletedCount, remaining: remaining.map(d=>({id:d.id, name:d.name, type:d.type}))});
 });
 app.get('/test/alexa-discover/:userId', async (req,res)=>{
   const devs = await Device.find({userId:req.params.userId});
-  res.json({found:devs.length, devices:devs.map(d=>({id:d.id, name:d.name, type:d.type}))});
+  res.json({found:devs.length, devices:devs});
 });
 
+// GOOGLE SEPARATE BRIGHTNESS - V71 FIX
 async function googleHandler(req,res){
   try{
     const token = req.headers.authorization?.replace('Bearer ','');
@@ -102,7 +114,9 @@ async function googleHandler(req,res){
     const intent = req.body.inputs?.[0]?.intent;
     console.log(`GOOGLE ${intent} for ${userId}`);
     if(intent==='action.devices.SYNC'){
+      try{ await OfflineState.deleteMany({}); offlineDevices.clear(); await Device.updateMany({userId}, {offline:false}); }catch(e){}
       const userDevices = await Device.find({userId});
+      console.log(`SYNC found ${userDevices.length}`);
       const devices = userDevices.map(d=>{
         let traits = d.type==='FAN' ? ['action.devices.traits.OnOff','action.devices.traits.FanSpeed'] : d.type==='LIGHT' ? ['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting'] : ['action.devices.traits.OnOff'];
         let attrs = {};
@@ -154,6 +168,7 @@ async function googleHandler(req,res){
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               if(p.fanSpeed){ const mapStr={low:2, medium:3, high:5}; d.speed=mapStr[p.fanSpeed.toLowerCase()]||3; d.state='ON'; ns.currentFanSpeedSetting=p.fanSpeed; ns.on=true; }
+              else if(p.fanSpeedPercent!==undefined){ const pct=parseInt(p.fanSpeedPercent); let s=1; if(pct<=20) s=1; else if(pct<=40) s=2; else if(pct<=60) s=3; else if(pct<=80) s=4; else s=5; d.speed=s; d.state='ON'; const revMap={1:'low',2:'low',3:'medium',4:'high',5:'high'}; ns.currentFanSpeedSetting=revMap[s]; ns.on=true; }
             }
           }
           d.offline=false; await d.save();
@@ -164,26 +179,35 @@ async function googleHandler(req,res){
       return res.json({requestId, payload:{commands:[{ids:Object.keys(outStates), status:'SUCCESS', states:outStates}]}});
     }
     return res.json({requestId, payload:{}});
-  }catch(e){ res.status(500).json({error:e.message}); }
+  }catch(e){ console.log('GOOGLE ERR', e.message); res.status(500).json({error:e.message}); }
 }
 app.post('/google/smarthome', googleHandler);
 app.post('/smarthome', googleHandler);
 
-// ALEXA V73 HARDCODED
+// ALEXA - V74 HARDCODED 2 DEVICES + PROVEN LINKING
 app.post('/alexa/smarthome', async (req,res)=>{
   try{
     const header = req.body.directive?.header;
     const ns = header?.namespace;
     const name = header?.name;
+    console.log(`ALEXA RAW ${JSON.stringify(req.body).substring(0,600)}`);
     console.log(`ALEXA ${ns} ${name}`);
+
     if(ns==='Alexa.Authorization' && name==='AcceptGrant'){
+      try{
+        const t = req.headers.authorization?.replace('Bearer ','');
+        if(t){ const dec=verifyToken(t); console.log('AcceptGrant user', dec.userId); }
+      }catch(e){}
+      console.log('ALEXA AcceptGrant - returning success');
       return res.json({event:{header:{namespace:'Alexa.Authorization', name:'AcceptGrant.Response', payloadVersion:'3', messageId:header.messageId}, payload:{}}});
     }
+
     const auth=req.headers.authorization;
     if(!auth) return res.status(401).json({error:'no auth'});
     const token=auth.replace('Bearer ','');
-    let dec; try{ dec=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid'}); }
+    let dec; try{ dec=verifyToken(token); }catch(e){ console.log('ALEXA invalid token', e.message); return res.status(401).json({error:'invalid token'}); }
     const userId=dec.userId;
+
     if(ns==='Alexa.Discovery' && name==='Discover'){
       console.log(`ALEXA Discover for ${userId} - HARDCODED 2`);
       const endpoints=[
@@ -217,14 +241,17 @@ app.post('/alexa/smarthome', async (req,res)=>{
           ]
         }
       ];
+      console.log('ALEXA Returning 2 hardcoded endpoints');
       return res.json({event:{header:{namespace:'Alexa.Discovery', name:'Discover.Response', payloadVersion:'3', messageId:header.messageId}, payload:{endpoints}}});
     }
+
     if(ns==='Alexa.PowerController'){
       const eid=req.body.directive.endpoint.endpointId;
       let dev=await Device.findOne({id:eid, userId}) || await Device.findOne({deviceId:eid, userId});
-      if(dev){ dev.state=(name==='TurnOn'?'ON':'OFF'); dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev); }
+      if(dev){ dev.state=(name==='TurnOn'?'ON':'OFF'); dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev); console.log(`ALEXA Power ${eid} ${dev.state}`); }
       return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}});
     }
+
     if(ns==='Alexa.BrightnessController'){
       const eid=req.body.directive.endpoint.endpointId;
       const b=req.body.directive.payload.brightness;
@@ -233,6 +260,7 @@ app.post('/alexa/smarthome', async (req,res)=>{
         return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.BrightnessController', name:'brightness', value:bb, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
       }
     }
+
     if(ns==='Alexa.RangeController'){
       const eid=req.body.directive.endpoint.endpointId;
       const rangeVal=req.body.directive.payload.rangeValue;
@@ -240,10 +268,11 @@ app.post('/alexa/smarthome', async (req,res)=>{
       if(dev){ dev.speed=Math.max(1,Math.min(5, parseInt(rangeVal))); dev.state='ON'; dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev); }
       return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.RangeController', instance:'FanSpeed', name:'rangeValue', value:rangeVal, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
     }
+
     return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:req.body.directive.endpoint, payload:{}}});
-  }catch(e){ console.log('ALEXA ERR', e.message); res.status(500).json({error:e.message}); }
+  }catch(e){ console.log('ALEXA ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
 });
 
-app.get('/', (req,res)=> res.send('<h1>V73</h1><a href="/test/version">version</a> | <a href="/test/delete-bad">delete bad</a>'));
+app.get('/', (req,res)=> res.send('<h1>Thavayil V74 FINAL STABLE</h1><a href="/test/version">version</a> | <a href="/test/delete-bad">delete bad</a>'));
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`V73 HARDCODED Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`Thavayil V74 FINAL STABLE Port ${PORT}`));
