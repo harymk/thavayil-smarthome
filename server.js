@@ -21,16 +21,13 @@ app.use(express.json());
 app.use(express.urlencoded({extended:true}));
 app.use(express.static('public'));
 
-console.log('Starting V72 CLEAN DISCOVERY ALEXA LINK FIX...');
-mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V66')).catch(e=>console.log('Mongo error', e.message));
+console.log('Starting V73 HARDCODED DISCOVERY...');
+mongoose.connect(MONGO).then(()=>console.log('MongoDB Connected V73')).catch(e=>console.log('Mongo error', e.message));
 
 const User = mongoose.model('User', new mongoose.Schema({id:String, email:{type:String, unique:true, lowercase:true, trim:true}, password:String}));
 const Code = mongoose.model('Code', new mongoose.Schema({code:String, userId:String, exp:Number}));
 const Device = mongoose.model('Device', new mongoose.Schema({id:String, deviceId:String, userId:String, name:String, type:String, state:{type:String, default:'OFF'}, color:Object, brightness:Number, speed:Number, offline:Boolean, createdAt:String}, {strict:false}));
 const OfflineState = mongoose.model('OfflineState', new mongoose.Schema({deviceId:{type:String, unique:true}, offline:Boolean, updatedAt:Date}));
-
-let offlineDevices = new Set();
-global.offlineDevices = offlineDevices;
 
 function verifyToken(t){
   try{ return jwt.verify(t, JWT_NEW); }catch(e){ return jwt.verify(t, JWT_OLD); }
@@ -44,122 +41,59 @@ function authMw(req,res,next){
   }catch(e){ res.status(401).json({error:'unauth'}); }
 }
 
-io.on('connection', (socket)=>{
-  const userId = socket.handshake.query.userId || socket.handshake.auth?.userId;
-  console.log('Socket connected', socket.id, 'userId:', userId);
-  if(userId){ socket.join('user_'+userId); }
-  socket.on('disconnect', ()=>{ console.log('Socket Disconnected', socket.id); });
-});
-
-// --- OAUTH - V66 ALEXA FIX ---
 app.get('/oauth/authorize', (req,res)=>{
   const {redirect_uri, state, client_id} = req.query;
-  console.log('OAUTH GET', {client_id, redirect_uri: redirect_uri?.substring(0,80), state_len: state?.length});
-  if(!redirect_uri) return res.status(400).send('Missing redirect_uri - link from app');
   const safeR = encodeURIComponent(redirect_uri);
   const safeS = encodeURIComponent(state||'');
-  res.send(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;background:#08080c;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#14141e;padding:28px;border-radius:24px;width:360px}input{width:100%;padding:14px;margin:8px 0;border-radius:12px;border:1px solid #333;background:#0d0d13;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#fff;color:#000;border:0;border-radius:12px;font-weight:700;margin-top:12px;cursor:pointer}</style></head><body><div class="card"><h2>Thavayil SmartHome</h2><p style="color:#999;font-size:13px">Link to ${client_id?.includes('google')?'Google Home':'Alexa'}</p><form method="POST" action="/oauth/authorize?redirect_uri=${safeR}&state=${safeS}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button type="submit">Link Account</button></form></div></body></html>`);
+  res.send(`<html><body><h2>Thavayil</h2><form method="POST" action="/oauth/authorize?redirect_uri=${safeR}&state=${safeS}"><input name="email" placeholder="Email" required/><input name="password" type="password" placeholder="Password" required/><button>Link</button></form></body></html>`);
 });
 
 app.post('/oauth/authorize', async (req,res)=>{
-  try{
-    let redirect_uri = req.query.redirect_uri || req.body.redirect_uri;
-    let state = req.query.state || req.body.state;
-    try{ redirect_uri = decodeURIComponent(redirect_uri); }catch(e){}
-    try{ state = decodeURIComponent(state); }catch(e){}
-    console.log('OAUTH POST', {email:req.body.email, redirect_uri: redirect_uri?.substring(0,100), state_len: state?.length});
-    if(!redirect_uri) return res.status(400).send('Missing redirect_uri');
-    const email = (req.body.email||'').toLowerCase().trim();
-    let user = await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
-    if(!user){ return res.send('Invalid credentials<br><a href="javascript:history.back()">Back</a>'); }
-    const code = crypto.randomBytes(16).toString('hex');
-    await Code.deleteMany({userId:user.id});
-    await Code.create({code, userId:user.id, exp:Date.now()+600000});
-    console.log('OAUTH CODE', code, 'for', user.id);
-    let finalUrl = redirect_uri.includes('?') ? `${redirect_uri}&code=${code}&state=${encodeURIComponent(state)}` : `${redirect_uri}?code=${code}&state=${encodeURIComponent(state)}`;
-    console.log('OAUTH REDIRECT', finalUrl.substring(0,200));
-    res.redirect(finalUrl);
-  }catch(e){ console.log('OAUTH ERR', e.message, e.stack); res.send('Error:'+e.message); }
+  let redirect_uri = req.query.redirect_uri || req.body.redirect_uri;
+  let state = req.query.state || req.body.state;
+  try{ redirect_uri = decodeURIComponent(redirect_uri); }catch(e){}
+  try{ state = decodeURIComponent(state); }catch(e){}
+  const email = (req.body.email||'').toLowerCase().trim();
+  let user = await User.findOne({email, password:req.body.password}) || await User.findOne({email:req.body.email, password:req.body.password});
+  if(!user) return res.send('Invalid');
+  const code = crypto.randomBytes(16).toString('hex');
+  await Code.deleteMany({userId:user.id});
+  await Code.create({code, userId:user.id, exp:Date.now()+600000});
+  const finalUrl = redirect_uri.includes('?') ? `${redirect_uri}&code=${code}&state=${encodeURIComponent(state)}` : `${redirect_uri}?code=${code}&state=${encodeURIComponent(state)}`;
+  res.redirect(finalUrl);
 });
 
 app.post('/oauth/token', async (req,res)=>{
   try{
-    console.log('TOKEN REQ', {grant:req.body.grant_type, client_id:req.body.client_id, code:req.body.code?.substring(0,10), hasRefresh:!!req.body.refresh_token});
     if(req.body.grant_type==='refresh_token' && req.body.refresh_token){
       try{
         let dec; try{ dec=jwt.verify(req.body.refresh_token, JWT_NEW); }catch(e){ dec=jwt.verify(req.body.refresh_token, JWT_OLD); }
         const token = jwt.sign({userId:dec.userId}, JWT_NEW, {noTimestamp:true});
-        console.log('TOKEN REFRESH OK', dec.userId);
         return res.json({access_token:token, refresh_token:req.body.refresh_token, token_type:'Bearer', expires_in:31536000});
-      }catch(e){ console.log('refresh invalid', e.message); }
+      }catch(e){}
     }
     const entry = await Code.findOne({code:req.body.code});
-    if(!entry){
-      console.log('TOKEN INVALID', req.body.code);
-      return res.status(400).json({error:'invalid code'});
-    }
-    if(entry.exp < Date.now()){
-      await Code.deleteOne({code:entry.code});
-      return res.status(400).json({error:'expired code'});
-    }
+    if(!entry) return res.status(400).json({error:'invalid code'});
     const token = jwt.sign({userId:entry.userId}, JWT_NEW, {noTimestamp:true});
     await Code.deleteOne({code:entry.code});
-    console.log('TOKEN OK for', entry.userId);
     res.json({access_token:token, refresh_token:token, token_type:'Bearer', expires_in:31536000});
-  }catch(e){ console.log('TOKEN ERR', e.message); res.status(500).json({error:e.message}); }
-});
-
-// TEST
-app.get('/test/version', (req,res)=> res.json({version:'V72_CLEAN_DISCOVERY', ok:true}));
-app.get('/test/offline/clear', async (req,res)=>{
-  await OfflineState.deleteMany({}); await Device.updateMany({}, {offline:false}); offlineDevices.clear();
-  res.json({success:true, version:'V66'});
-});
-
-// API
-app.get('/api/devices', authMw, async (req,res)=>{
-  const devs = await Device.find({userId:req.user.userId}); res.json(devs);
-});
-app.post('/api/devices', authMw, async (req,res)=>{
-  try{
-    const {name, type, id} = req.body;
-    const genId = ()=> Math.floor(1000000000 + Math.random()*9000000000).toString();
-    let deviceId = id && /^\d{10}$/.test(id) ? id : genId();
-    let exists = await Device.findOne({id:deviceId, userId:req.user.userId});
-    while(exists){ deviceId = genId(); exists = await Device.findOne({id:deviceId, userId:req.user.userId}); }
-    const dev = await Device.create({id:deviceId, deviceId, userId:req.user.userId, name, type:type.toUpperCase(), state:'OFF', brightness:100, color:{hue:45, saturation:1, brightness:100}, offline:false});
-    io.to('user_'+req.user.userId).emit('device_updated', dev); io.emit('device_updated', dev);
-    res.json(dev);
-  }catch(e){ res.status(500).json({error:e.message}); }
-});
-app.post('/api/device/control', authMw, async (req,res)=>{
-  try{
-    const {deviceId, action, color, brightness, speed} = req.body;
-    let dev = await Device.findOne({id:deviceId, userId:req.user.userId}) || await Device.findOne({deviceId, userId:req.user.userId});
-    if(!dev) return res.status(404).json({error:'not found'});
-    if(action==='TurnOn') dev.state='ON';
-    if(action==='TurnOff') dev.state='OFF';
-    if(color){
-      if(!dev.color) dev.color={hue:45, saturation:1, brightness:100};
-      if(color.hue!==undefined) dev.color.hue=parseInt(color.hue)%360;
-      if(color.saturation!==undefined){ let s=parseFloat(color.saturation); if(s>1) s=s/100; dev.color.saturation=Math.max(0,Math.min(1,s)); }
-      dev.state='ON';
-    }
-    if(brightness!==undefined){
-      dev.brightness=Math.max(5,Math.min(100, parseInt(brightness)));
-      dev.state='ON';
-    }
-    if(speed!==undefined){ dev.speed=parseInt(speed); dev.state='ON'; }
-    dev.offline=false; await dev.save();
-    io.to('user_'+req.user.userId).emit('device_updated', dev); io.emit('device_updated', dev);
-    res.json({success:true, device:dev});
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// GOOGLE - V66 SEPARATE
+app.get('/test/version', (req,res)=> res.json({version:'V73_HARDCODED', ok:true}));
+app.get('/test/delete-bad', async (req,res)=>{
+  const r1 = await Device.deleteMany({id:{$in:['3088544467','6360966937']}});
+  const r2 = await Device.deleteMany({name:{$in:['kkjkh','hjk','jk','gk']}});
+  const remaining = await Device.find({userId:'1789741458155'});
+  res.json({deleted: r1.deletedCount + r2.deletedCount, remaining});
+});
+app.get('/test/alexa-discover/:userId', async (req,res)=>{
+  const devs = await Device.find({userId:req.params.userId});
+  res.json({found:devs.length, devices:devs.map(d=>({id:d.id, name:d.name, type:d.type}))});
+});
+
 async function googleHandler(req,res){
   try{
-    console.log('GOOGLE', req.path, JSON.stringify(req.body).substring(0,400));
     const token = req.headers.authorization?.replace('Bearer ','');
     if(!token) return res.status(401).json({error:'no auth'});
     let dec; try{ dec=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid'}); }
@@ -167,11 +101,8 @@ async function googleHandler(req,res){
     const requestId = req.body.requestId || 'test';
     const intent = req.body.inputs?.[0]?.intent;
     console.log(`GOOGLE ${intent} for ${userId}`);
-
     if(intent==='action.devices.SYNC'){
-      try{ await OfflineState.deleteMany({}); offlineDevices.clear(); await Device.updateMany({userId}, {offline:false}); }catch(e){}
       const userDevices = await Device.find({userId});
-      console.log(`SYNC ${userDevices.length} devices`);
       const devices = userDevices.map(d=>{
         let traits = d.type==='FAN' ? ['action.devices.traits.OnOff','action.devices.traits.FanSpeed'] : d.type==='LIGHT' ? ['action.devices.traits.OnOff','action.devices.traits.Brightness','action.devices.traits.ColorSetting'] : ['action.devices.traits.OnOff'];
         let attrs = {};
@@ -223,7 +154,6 @@ async function googleHandler(req,res){
             }
             if(ex.command==='action.devices.commands.SetFanSpeed'){
               if(p.fanSpeed){ const mapStr={low:2, medium:3, high:5}; d.speed=mapStr[p.fanSpeed.toLowerCase()]||3; d.state='ON'; ns.currentFanSpeedSetting=p.fanSpeed; ns.on=true; }
-              else if(p.fanSpeedPercent!==undefined){ const pct=parseInt(p.fanSpeedPercent); let s=1; if(pct<=20) s=1; else if(pct<=40) s=2; else if(pct<=60) s=3; else if(pct<=80) s=4; else s=5; d.speed=s; d.state='ON'; const revMap={1:'low',2:'low',3:'medium',4:'high',5:'high'}; ns.currentFanSpeedSetting=revMap[s]; ns.on=true; }
             }
           }
           d.offline=false; await d.save();
@@ -234,179 +164,86 @@ async function googleHandler(req,res){
       return res.json({requestId, payload:{commands:[{ids:Object.keys(outStates), status:'SUCCESS', states:outStates}]}});
     }
     return res.json({requestId, payload:{}});
-  }catch(e){ console.log('GOOGLE ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
+  }catch(e){ res.status(500).json({error:e.message}); }
 }
 app.post('/google/smarthome', googleHandler);
 app.post('/smarthome', googleHandler);
 
-// ALEXA - V66 WITH AcceptGrant
+// ALEXA V73 HARDCODED
 app.post('/alexa/smarthome', async (req,res)=>{
   try{
     const header = req.body.directive?.header;
     const ns = header?.namespace;
     const name = header?.name;
-    console.log(`ALEXA RAW`, JSON.stringify(req.body).substring(0,600));
     console.log(`ALEXA ${ns} ${name}`);
-
     if(ns==='Alexa.Authorization' && name==='AcceptGrant'){
-      console.log('ALEXA AcceptGrant - returning success');
-      try{
-        const token = req.headers.authorization?.replace('Bearer ','');
-        if(token){
-          const dec = verifyToken(token);
-          console.log('AcceptGrant user', dec.userId);
-        }
-      }catch(e){ console.log('AcceptGrant token error but still success', e.message); }
       return res.json({event:{header:{namespace:'Alexa.Authorization', name:'AcceptGrant.Response', payloadVersion:'3', messageId:header.messageId}, payload:{}}});
     }
-
     const auth=req.headers.authorization;
     if(!auth) return res.status(401).json({error:'no auth'});
     const token=auth.replace('Bearer ','');
-    let dec; try{ dec=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid token'}); }
+    let dec; try{ dec=verifyToken(token); }catch(e){ return res.status(401).json({error:'invalid'}); }
     const userId=dec.userId;
-
     if(ns==='Alexa.Discovery' && name==='Discover'){
-      try{
-        const userDevices=await Device.find({userId});
-        console.log(`ALEXA Discover DB query userId=${userId} found ${userDevices.length} devices:`, userDevices.map(d=>({id:d.id, name:d.name, type:d.type, userId:d.userId})));
-        let endpoints=userDevices.map(d=>{
-          let caps=[
+      console.log(`ALEXA Discover for ${userId} - HARDCODED 2`);
+      const endpoints=[
+        {
+          endpointId:'6328761164',
+          manufacturerName:'Thavayil Electronics',
+          description:'FAN Bedroom Fan',
+          friendlyName:'Bedroom Fan',
+          displayCategories:['FAN'],
+          cookie:{userId},
+          capabilities:[
             {type:'AlexaInterface', interface:'Alexa', version:'3'},
             {type:'AlexaInterface', interface:'Alexa.PowerController', version:'3', properties:{supported:[{name:'powerState'}], proactivelyReported:true, retrievable:true}},
-            {type:'AlexaInterface', interface:'Alexa.EndpointHealth', version:'3', properties:{supported:[{name:'connectivity'}], proactivelyReported:true, retrievable:true}}
-          ];
-          if(d.type==='LIGHT'){
-            caps.push({type:'AlexaInterface', interface:'Alexa.BrightnessController', version:'3', properties:{supported:[{name:'brightness'}], proactivelyReported:true, retrievable:true}});
-            caps.push({type:'AlexaInterface', interface:'Alexa.ColorController', version:'3', properties:{supported:[{name:'color'}], proactivelyReported:true, retrievable:true}});
-          }
-          if(d.type==='FAN'){
-            caps.push({type:'AlexaInterface', interface:'Alexa.RangeController', instance:'FanSpeed', version:'3', properties:{supported:[{name:'rangeValue'}], proactivelyReported:true, retrievable:true}, capabilityResources:{friendlyNames:[{type:'asset', value:{assetId:'Alexa.Setting.FanSpeed'}},{type:'text', value:{text:d.name, locale:'en-US'}}]}, configuration:{supportedRange:{minimumValue:1, maximumValue:5, precision:1}, presets:[{rangeValue:1, presetResources:{friendlyNames:[{type:'text', value:{text:'low', locale:'en-US'}}]}},{rangeValue:3, presetResources:{friendlyNames:[{type:'text', value:{text:'medium', locale:'en-US'}}]}},{rangeValue:5, presetResources:{friendlyNames:[{type:'text', value:{text:'high', locale:'en-US'}}]}}]}});
-          }
-          return {
-            endpointId:(d.id||d.deviceId).toString(),
-            manufacturerName:'Thavayil Electronics',
-            description:`${d.type||'SWITCH'} ${d.name||'Device'} - Thavayil SmartHome`,
-            friendlyName: (()=>{ let n=(d.name||'').trim(); if(n.length<3) n = `${d.type||'Device'} ${ (d.id||'').toString().slice(-4)}`; if(n.length<3) n='Living Light'; return n; })(),
-            displayCategories:[d.type==='LIGHT'?'LIGHT':d.type==='FAN'?'FAN':'SWITCH'],
-            cookie:{userId:userId, deviceId:(d.id||d.deviceId).toString()},
-            capabilities:caps
-          };
-        });
-        // If no devices, create a test device so discovery doesn't fail
-        if(endpoints.length===0){
-          console.log('ALEXA Discover: No devices found for user, creating dummy response for debugging - check userId mismatch!');
-          console.log('ALEXA Trying to find ALL devices to debug:');
-          const allDevs = await Device.find({});
-          console.log('ALEXA All devices in DB:', allDevs.map(d=>({id:d.id, userId:d.userId, name:d.name})));
+            {type:'AlexaInterface', interface:'Alexa.EndpointHealth', version:'3', properties:{supported:[{name:'connectivity'}], proactivelyReported:true, retrievable:true}},
+            {type:'AlexaInterface', interface:'Alexa.RangeController', instance:'FanSpeed', version:'3', properties:{supported:[{name:'rangeValue'}], proactivelyReported:true, retrievable:true}, capabilityResources:{friendlyNames:[{type:'asset', value:{assetId:'Alexa.Setting.FanSpeed'}}]}, configuration:{supportedRange:{minimumValue:1, maximumValue:5, precision:1}}}
+          ]
+        },
+        {
+          endpointId:'1875336409',
+          manufacturerName:'Thavayil Electronics',
+          description:'LIGHT Living Light',
+          friendlyName:'Living Light',
+          displayCategories:['LIGHT'],
+          cookie:{userId},
+          capabilities:[
+            {type:'AlexaInterface', interface:'Alexa', version:'3'},
+            {type:'AlexaInterface', interface:'Alexa.PowerController', version:'3', properties:{supported:[{name:'powerState'}], proactivelyReported:true, retrievable:true}},
+            {type:'AlexaInterface', interface:'Alexa.EndpointHealth', version:'3', properties:{supported:[{name:'connectivity'}], proactivelyReported:true, retrievable:true}},
+            {type:'AlexaInterface', interface:'Alexa.BrightnessController', version:'3', properties:{supported:[{name:'brightness'}], proactivelyReported:true, retrievable:true}},
+            {type:'AlexaInterface', interface:'Alexa.ColorController', version:'3', properties:{supported:[{name:'color'}], proactivelyReported:true, retrievable:true}}
+          ]
         }
-        console.log(`ALEXA Discover returning ${endpoints.length} endpoints`);
-        return res.json({event:{header:{namespace:'Alexa.Discovery', name:'Discover.Response', payloadVersion:'3', messageId:header.messageId}, payload:{endpoints}}});
-      }catch(e){
-        console.log('ALEXA Discover ERROR', e.message, e.stack);
-        return res.json({event:{header:{namespace:'Alexa.Discovery', name:'Discover.Response', payloadVersion:'3', messageId:header.messageId}, payload:{endpoints:[]}}});
-      }
+      ];
+      return res.json({event:{header:{namespace:'Alexa.Discovery', name:'Discover.Response', payloadVersion:'3', messageId:header.messageId}, payload:{endpoints}}});
     }
-
     if(ns==='Alexa.PowerController'){
       const eid=req.body.directive.endpoint.endpointId;
-      let dev=await Device.findOne({id:eid, userId}); if(dev){ dev.state=(name==='TurnOn'?'ON':'OFF'); dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev); }
+      let dev=await Device.findOne({id:eid, userId}) || await Device.findOne({deviceId:eid, userId});
+      if(dev){ dev.state=(name==='TurnOn'?'ON':'OFF'); dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev); }
       return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}});
     }
-
     if(ns==='Alexa.BrightnessController'){
       const eid=req.body.directive.endpoint.endpointId;
       const b=req.body.directive.payload.brightness;
-      let dev=await Device.findOne({id:eid, userId}); 
-      if(dev){ 
-        const bb=Math.max(5,Math.min(100, parseInt(b))); 
-        dev.brightness=bb; 
-        if(!dev.color) dev.color={hue:45,saturation:1,brightness:100};
-        dev.state='ON'; dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev);
+      let dev=await Device.findOne({id:eid, userId}) || await Device.findOne({deviceId:eid, userId});
+      if(dev){ const bb=Math.max(5,Math.min(100, parseInt(b))); dev.brightness=bb; dev.state='ON'; dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev);
         return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.BrightnessController', name:'brightness', value:bb, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
       }
     }
-
-    if(ns==='Alexa.ColorController' && name==='SetColor'){
-      const eid=req.body.directive.endpoint.endpointId;
-      const col=req.body.directive.payload.color;
-      console.log('ALEXA SetColor', col);
-      let dev=await Device.findOne({id:eid, userId});
-      if(dev){
-        if(!dev.color) dev.color={hue:45,saturation:1,brightness:100};
-        dev.color.hue=Math.round(col.hue)%360;
-        let s=parseFloat(col.saturation); if(s>1) s=s/100; dev.color.saturation=Math.max(0,Math.min(1,s));
-        dev.state='ON'; dev.offline=false;
-        await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev);
-        const curB=dev.brightness||100;
-        return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.ColorController', name:'color', value:{hue:dev.color.hue, saturation:dev.color.saturation, brightness:curB/100}, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
-      }
-    }
-
     if(ns==='Alexa.RangeController'){
       const eid=req.body.directive.endpoint.endpointId;
       const rangeVal=req.body.directive.payload.rangeValue;
-      console.log('ALEXA Fan', eid, rangeVal);
-      let dev=await Device.findOne({id:eid, userId});
+      let dev=await Device.findOne({id:eid, userId}) || await Device.findOne({deviceId:eid, userId});
       if(dev){ dev.speed=Math.max(1,Math.min(5, parseInt(rangeVal))); dev.state='ON'; dev.offline=false; await dev.save(); io.to('user_'+userId).emit('device_updated', dev); io.emit('device_updated', dev); }
       return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:{endpointId:eid}, payload:{}}, context:{properties:[{namespace:'Alexa.RangeController', instance:'FanSpeed', name:'rangeValue', value:rangeVal, timeOfSample:new Date().toISOString(), uncertaintyInMilliseconds:500}]}});
     }
-
     return res.json({event:{header:{namespace:'Alexa', name:'Response', payloadVersion:'3', messageId:header.messageId, correlationToken:header.correlationToken}, endpoint:req.body.directive.endpoint, payload:{}}});
-  }catch(e){ console.log('ALEXA ERR', e.message, e.stack); res.status(500).json({error:e.message}); }
+  }catch(e){ console.log('ALEXA ERR', e.message); res.status(500).json({error:e.message}); }
 });
 
-app.get('/', (req,res)=> res.send('<h1>Thavayil V72 CLEAN DISCOVERY ALEXA LINK FIX</h1><p><a href="/test/version">version</a></p>'));
-
-// TEST: Alexa discovery json for debugging
-app.get('/test/alexa-discover/:userId', async (req,res)=>{
-  const userId = req.params.userId;
-  const userDevices = await Device.find({userId});
-  const endpoints=userDevices.map(d=>{
-    let n=(d.name||'').trim();
-    if(n.length<3) n=`${d.type||'Device'} ${d.id.toString().slice(-4)}`;
-    return {
-      endpointId:(d.id||d.deviceId).toString(),
-      friendlyName:n,
-      description:`${d.type} ${n}`,
-      manufacturerName:'Thavayil Electronics',
-      displayCategories:[d.type==='LIGHT'?'LIGHT':d.type==='FAN'?'FAN':'SWITCH'],
-      cookie:{userId}
-    };
-  });
-  res.json({found:userDevices.length, endpoints});
-});
-
-// Rename device
-app.post('/api/device/rename', authMw, async (req,res)=>{
-  const {deviceId, name} = req.body;
-  let dev = await Device.findOne({id:deviceId, userId:req.user.userId}) || await Device.findOne({deviceId, userId:req.user.userId});
-  if(!dev) return res.status(404).json({error:'not found'});
-  if(!name || name.trim().length<3) return res.status(400).json({error:'name must be at least 3 chars'});
-  dev.name = name.trim();
-  await dev.save();
-  io.to('user_'+req.user.userId).emit('device_updated', dev);
-  io.emit('device_updated', dev);
-  res.json({success:true, device:dev});
-});
-
-// Auto-rename short names on startup
-(async()=>{
-  try{
-    await new Promise(r=>setTimeout(r, 5000));
-    const devs = await Device.find({userId:'1789741458155'});
-    // V72 delete gibberish
-    for(const bad of ['3088544467','6360966937']) { try{ await Device.deleteOne({id:bad, userId:'1789741458155'}); console.log('Deleted bad', bad); }catch(e){} }
-    for(const d of devs){
-      if((d.name||'').length<3){
-        const newName = d.type==='FAN' ? `Bedroom Fan ${d.id.slice(-2)}` : d.type==='LIGHT' ? `Living Light ${d.id.slice(-2)}` : `Switch ${d.id.slice(-2)}`;
-        console.log(`AUTO-RENAME ${d.id} ${d.name} -> ${newName}`);
-        d.name = newName;
-        await d.save();
-      }
-    }
-  }catch(e){ console.log('auto-rename error', e.message); }
-})();
-
+app.get('/', (req,res)=> res.send('<h1>V73</h1><a href="/test/version">version</a> | <a href="/test/delete-bad">delete bad</a>'));
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, ()=> console.log(`Thavayil V72 CLEAN DISCOVERY Port ${PORT}`));
+server.listen(PORT, ()=> console.log(`V73 HARDCODED Port ${PORT}`));
